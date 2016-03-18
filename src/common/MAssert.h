@@ -110,10 +110,47 @@ public:
 #endif
 
 #undef _ASSERT
-#define _ASSERT(x) ASSERT(x)
 #undef _ASSERTE
-#define _ASSERTE(x) ASSERTE(x)
 #undef _ASSERTEX
-#define _ASSERTEX(x) ASSERTEX(x)
+
+#if CE_UNIT_TEST==1
+
+	extern bool gbVerifyFailed;
+
+	#include <stdio.h>
+	extern const char* PointToName(const char* asFileOrPath);
+	#define _ASSERT(x) if (!(x)) { gbVerifyFailed=true; printf(\
+		"    \033[91m" \
+		    "ASSERTION: %s\n" \
+		"         FILE: %s LINE: %i" \
+		"\033[m\n", (#x), PointToName(__FILE__), __LINE__); }
+	#define _ASSERTE(x) _ASSERT(x)
+	#define _ASSERTEX(x) _ASSERT(x)
+
+	#define Verify_Step(step) printf("  \033[36m%s\033[m\n" , step)
+	#define Verify_MsgOk(msg) printf("  \033[32m" "%s" "\033[m\n",(msg))
+	#define Verify_MsgFail(msg) printf("  \033[91m" "%s" "\033[m\n",(msg))
+	#define Verify4(cond,errfmt,a1,a2,a3,a4) \
+		if (!(cond)) printf("    \033[91m" errfmt "\033[m\n",(a1),(a2),(a3),(a4)), gbVerifyFailed=true; \
+		        else printf("    \033[32m" errfmt "\033[m\n",(a1),(a2),(a3),(a4))
+	#define Verify3(cond,errfmt,a1,a2,a3) Verify4(cond,errfmt,a1,a2,a3,0)
+	#define Verify2(cond,errfmt,a1,a2) Verify3(cond,errfmt,a1,a2,0)
+	#define Verify1(cond,errfmt,a1) Verify2(cond,errfmt,a1,0)
+	#define Verify0(cond,errfmt) Verify1(cond,errfmt,0)
+	#define WVerify4(cond,errfmt,a1,a2,a3,a4) \
+		if (!(cond)) wprintf(L"    \033[91m" errfmt L"\033[m\n",(a1),(a2),(a3),(a4)), gbVerifyFailed=true; \
+		        else wprintf(L"    \033[32m" errfmt L"\033[m\n",(a1),(a2),(a3),(a4))
+	#define WVerify3(cond,errfmt,a1,a2,a3) WVerify4(cond,errfmt,a1,a2,a3,0)
+	#define WVerify2(cond,errfmt,a1,a2) WVerify3(cond,errfmt,a1,a2,0)
+	#define WVerify1(cond,errfmt,a1) WVerify2(cond,errfmt,a1,0)
+	#define WVerify0(cond,errfmt) WVerify1(cond,errfmt,0)
+
+#else
+
+	#define _ASSERT(x) ASSERT(x)
+	#define _ASSERTE(x) ASSERTE(x)
+	#define _ASSERTEX(x) ASSERTEX(x)
+
+#endif
 
 #endif // #ifndef MASSERT_HEADER_DEFINED

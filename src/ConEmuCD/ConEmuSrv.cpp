@@ -227,7 +227,7 @@ LGSResult LoadGuiSettingsPtr(ConEmuGuiMapping& GuiMapping, const ConEmuGuiMappin
 	{
 		// But active consoles list may be changed
 		if (!lbCopied)
-			memmove(GuiMapping.hActiveCons, pInfo->hActiveCons, sizeof(GuiMapping.hActiveCons));
+			memmove(GuiMapping.Consoles, pInfo->Consoles, sizeof(GuiMapping.Consoles));
 		liRc = lgs_ActiveChanged;
 	}
 	else
@@ -1263,6 +1263,14 @@ int ServerInit(int anWorkMode/*0-Server,1-AltServer,2-Reserved*/)
 			goto wrap;
 	}
 
+	if ((gnRunMode == RM_SERVER) && gbAttachMode)
+	{
+		DumpInitStatus("\nServerInit: ServerInitAttach2Gui");
+		iRc = ServerInitAttach2Gui();
+		if (iRc != 0)
+			goto wrap;
+	}
+
 	// Ensure that "set" commands in the command line will override ConEmu's default environment (settings page)
 	ApplyProcessSetEnvCmd();
 
@@ -1366,15 +1374,12 @@ int ServerInit(int anWorkMode/*0-Server,1-AltServer,2-Reserved*/)
 
 	if ((gnRunMode == RM_SERVER) && gbAttachMode)
 	{
-		DumpInitStatus("\nServerInit: ServerInitAttach2Gui");
-		iRc = ServerInitAttach2Gui();
-		if (iRc != 0)
-			goto wrap;
-		// ConEmuHk еще не загружен, а он необходим для многих функций
+		// External attach to running process, required ConEmuHk is not loaded yet
 		if (!gbAlternativeAttach && gbNoCreateProcess && gbAlienMode && !gbDontInjectConEmuHk)
 		{
 			if (gpSrv->dwRootProcess)
 			{
+				DumpInitStatus("\nServerInit: InjectRemote (gbAlienMode)");
 				CINFILTRATE_EXIT_CODES iRemote = InjectRemote(gpSrv->dwRootProcess);
 				if (iRemote != CIR_OK/*0*/ && iRemote != CIR_AlreadyInjected/*1*/)
 				{
@@ -3991,34 +3996,29 @@ static int ReadConsoleInfo()
 	gpSrv->pConsole->info.dwConsoleOutMode = gpSrv->dwConsoleOutMode;
 	gpSrv->pConsole->info.dwSbiSize = sizeof(gpSrv->sbi);
 	gpSrv->pConsole->info.sbi = gpSrv->sbi;
+
+
 	// Если есть возможность (WinXP+) - получим реальный список процессов из консоли
 	//CheckProcessCount(); -- уже должно быть вызвано !!!
 	//2010-05-26 Изменения в списке процессов не приходили в GUI до любого чиха в консоль.
+	#ifdef _DEBUG
 	_ASSERTE(gpSrv->pnProcesses!=NULL);
-
-	if (!gpSrv->nProcessCount /*&& gpSrv->pConsole->info.nProcesses[0]*/)
+	if (!gpSrv->nProcessCount)
 	{
-		_ASSERTE(gpSrv->nProcessCount); //CheckProcessCount(); -- уже должно быть вызвано !!!
+		_ASSERTE(gpSrv->nProcessCount); //CheckProcessCount(); -- must be already initialized !!!
+	}
+	#endif
+
+	DWORD nCurProcCount = GetProcessCount(gpSrv->pConsole->info.nProcesses, countof(gpSrv->pConsole->info.nProcesses));
+	_ASSERTE(nCurProcCount && gpSrv->pConsole->info.nProcesses[0]);
+	if (nCurProcCount
+		&& memcmp(gpSrv->nLastRetProcesses, gpSrv->pConsole->info.nProcesses, sizeof(gpSrv->nLastRetProcesses)))
+	{
+		// Process list was changed
+		memmove(gpSrv->nLastRetProcesses, gpSrv->pConsole->info.nProcesses, sizeof(gpSrv->nLastRetProcesses));
 		lbChanged = TRUE;
 	}
-	else if (memcmp(gpSrv->pnProcesses, gpSrv->pConsole->info.nProcesses,
-	               sizeof(DWORD)*min(gpSrv->nProcessCount,countof(gpSrv->pConsole->info.nProcesses))))
-	{
-		// Список процессов изменился!
-		lbChanged = TRUE;
-	}
 
-	GetProcessCount(gpSrv->pConsole->info.nProcesses, countof(gpSrv->pConsole->info.nProcesses));
-	_ASSERTE(gpSrv->pConsole->info.nProcesses[0]);
-	//if (memcmp(&(gpSrv->pConsole->hdr), gpSrv->pConsoleMap->Ptr(), gpSrv->pConsole->hdr.cbSize))
-	//	gpSrv->pConsoleMap->SetFrom(&(gpSrv->pConsole->hdr));
-	//if (lbChanged) {
-	//	gpSrv->pConsoleMap->SetFrom(&(gpSrv->pConsole->hdr));
-	//	//lbChanged = TRUE;
-	//}
-	//if (lbChanged) {
-	//	//gpSrv->pConsole->bChanged = TRUE;
-	//}
 	return lbChanged ? 1 : 0;
 }
 
@@ -4430,6 +4430,7 @@ DWORD WINAPI RefreshThread(LPVOID lpvParam)
 	BOOL bDCWndVisible = (BOOL)-1;
 	BOOL bNewActive = (BOOL)-1, bNewFellInSleep = FALSE;
 	BOOL ActiveSleepInBg = (gpSrv->guiSettings.Flags & CECF_SleepInBackg);
+	BOOL RetardNAPanes = (gpSrv->guiSettings.Flags & CECF_RetardNAPanes);
 	BOOL bOurConActive = (BOOL)-1, bOneConActive = (BOOL)-1;
 	bool bLowSpeed = false;
 	BOOL bOnlyCursorChanged;
@@ -4799,13 +4800,13 @@ DWORD WINAPI RefreshThread(LPVOID lpvParam)
 		}
 
 		BOOL lbOurConActive = FALSE, lbOneConActive = FALSE;
-		for (size_t i = 0; i < countof(gpSrv->guiSettings.hActiveCons); i++)
+		for (size_t i = 0; i < countof(gpSrv->guiSettings.Consoles); i++)
 		{
-			HWND h = gpSrv->guiSettings.hActiveCons[i];
-			if (h)
+			ConEmuConsoleInfo& ci = gpSrv->guiSettings.Consoles[i];
+			if ((ci.Flags & ccf_Active) && (HWND)ci.Console)
 			{
 				lbOneConActive = TRUE;
-				if (ghConWnd == h)
+				if (ghConWnd == (HWND)ci.Console)
 				{
 					lbOurConActive = TRUE;
 					break;
@@ -4820,9 +4821,10 @@ DWORD WINAPI RefreshThread(LPVOID lpvParam)
 		bOneConActive = lbOneConActive;
 
 		ActiveSleepInBg = (gpSrv->guiSettings.Flags & CECF_SleepInBackg);
+		RetardNAPanes = (gpSrv->guiSettings.Flags & CECF_RetardNAPanes);
 
 		BOOL lbNewActive;
-		if (bOurConActive || bDCWndVisible)
+		if (bOurConActive || (bDCWndVisible && !RetardNAPanes))
 		{
 			// Mismatch may appears during console closing
 			//if (gpLogSize && gbInShutdown && (bDCWndVisible != bOurConActive))

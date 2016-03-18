@@ -187,7 +187,7 @@ BOOL    gbCtrlBreakStopWaitingShown = FALSE;
 BOOL    gbTerminateOnCtrlBreak = FALSE;
 BOOL    gbPrintRetErrLevel = FALSE; // Вывести в StdOut код завершения процесса (RM_COMSPEC в основном)
 bool    gbSkipHookersCheck = false;
-int     gnConfirmExitParm = 0; // 1 - RConStartArgs::eConfAlways, 2 - RConStartArgs::eConfNever, 3 - RConStartArgs::eConfEmpty
+RConStartArgs::CloseConfirm gnConfirmExitParm = RConStartArgs::eConfDefault; // | eConfAlways | eConfNever | eConfEmpty | eConfHalt
 BOOL    gbAlwaysConfirmExit = FALSE;
 BOOL    gbAutoDisableConfirmExit = FALSE; // если корневой процесс проработал достаточно (10 сек) - будет сброшен gbAlwaysConfirmExit
 BOOL    gbRootAliveLess10sec = FALSE; // корневой процесс проработал менее CHECK_ROOTOK_TIMEOUT
@@ -1911,6 +1911,18 @@ wrap:
 			wcscat_c(szInfo, L"\n");
 			_wprintf(szInfo);
 		}
+
+		// Post information to GUI
+		if (gnMainServerPID)
+		{
+			CESERVER_REQ* pIn = ExecuteNewCmd(CECMD_GETROOTINFO, sizeof(CESERVER_REQ_HDR)+sizeof(CESERVER_ROOT_INFO));
+			if (pIn && GetRootInfo(pIn))
+			{
+				CESERVER_REQ *pSrvOut = ExecuteGuiCmd(ghConWnd, pIn, ghConWnd, TRUE/*async*/);
+				ExecuteFreeResult(pSrvOut);
+			}
+			ExecuteFreeResult(pIn);
+		}
 	}
 
 	if (iRc && (gbAttachMode & am_Auto))
@@ -1974,7 +1986,8 @@ wrap:
 			pszMsg = L"\n\nPress Enter or Esc to exit...";
 			lbDontShowConsole = gnRunMode != RM_SERVER;
 		}
-		else if (gnConfirmExitParm == RConStartArgs::eConfEmpty)
+		else if ((gnConfirmExitParm == RConStartArgs::eConfEmpty)
+				|| (gnConfirmExitParm == RConStartArgs::eConfHalt))
 		{
 			lbLineFeedAfter = FALSE; // Don't print anything to console
 		}
@@ -2007,7 +2020,9 @@ wrap:
 			}
 		}
 
-		if (!pszMsg && (gnConfirmExitParm != RConStartArgs::eConfEmpty))
+		if (!pszMsg
+			&& (gnConfirmExitParm != RConStartArgs::eConfEmpty)
+			&& (gnConfirmExitParm != RConStartArgs::eConfHalt))
 		{
 			// Let's show anything (default message)
 			pszMsg = L"\n\nPress Enter or Esc to close console, or wait...";
@@ -2023,7 +2038,9 @@ wrap:
 			#endif
 		}
 
-		ExitWaitForKey(VK_RETURN|(VK_ESCAPE<<8), pszMsg, lbLineFeedAfter, lbDontShowConsole);
+		DWORD keys = (gnConfirmExitParm == RConStartArgs::eConfHalt) ? 0
+			: (VK_RETURN|(VK_ESCAPE<<8));
+		ExitWaitForKey(keys, pszMsg, lbLineFeedAfter, lbDontShowConsole);
 
 		UNREFERENCED_PARAMETER(nProcCount);
 		UNREFERENCED_PARAMETER(nProcesses[0]);
@@ -2429,6 +2446,7 @@ int CheckAttachProcess()
 		{
 			_wsprintf(szFailMsg, SKIPLEN(countof(szFailMsg)) L"Attach of GUI application was requested,\n"
 				L"but required HWND(0x%08X) not found!", LODWORD(gpSrv->hRootProcessGui));
+			LogString(szFailMsg);
 			liArgsFailed = 1;
 			// will return CERR_CARGUMENT
 		}
@@ -2440,6 +2458,7 @@ int CheckAttachProcess()
 				_wsprintf(szFailMsg, SKIPLEN(countof(szFailMsg)) L"Attach of GUI application was requested,\n"
 					L"but PID(%u) of HWND(0x%08X) does not match Root(%u)!",
 					nPid, LODWORD(gpSrv->hRootProcessGui), gpSrv->dwRootProcess);
+				LogString(szFailMsg);
 				liArgsFailed = 2;
 				// will return CERR_CARGUMENT
 			}
@@ -2448,6 +2467,7 @@ int CheckAttachProcess()
 	else if (pfnGetConsoleProcessList==NULL)
 	{
 		wcscpy_c(szFailMsg, L"Attach to console app was requested, but required WinXP or higher!");
+		LogString(szFailMsg);
 		liArgsFailed = 3;
 		// will return CERR_CARGUMENT
 	}
@@ -2474,6 +2494,7 @@ int CheckAttachProcess()
 		if (nProcCount < 2)
 		{
 			wcscpy_c(szFailMsg, L"Attach to console app was requested, but there is no console processes!");
+			LogString(szFailMsg);
 			liArgsFailed = 4;
 			//will return CERR_CARGUMENT
 		}
@@ -2516,12 +2537,14 @@ int CheckAttachProcess()
 			if ((gpSrv->dwRootProcess != 0) && !lbRootExists)
 			{
 				_wsprintf(szFailMsg, SKIPLEN(countof(szFailMsg)) L"Attach to GUI was requested, but\n" L"root process (%u) does not exists", gpSrv->dwRootProcess);
+				LogString(szFailMsg);
 				liArgsFailed = 5;
 				//will return CERR_CARGUMENT
 			}
 			else if ((gpSrv->dwRootProcess == 0) && (nProcCount > 2))
 			{
 				_wsprintf(szFailMsg, SKIPLEN(countof(szFailMsg)) L"Attach to GUI was requested, but\n" L"there is more than 2 console processes: %s\n", szProc);
+				LogString(szFailMsg);
 				liArgsFailed = 6;
 				//will return CERR_CARGUMENT
 			}
@@ -2556,6 +2579,8 @@ int CheckAttachProcess()
 
 		const DWORD nAttachErrorTimeoutMessage = 15*1000; // 15 sec
 		ExitWaitForKey(VK_RETURN|(VK_ESCAPE<<8), lsMsg, true, true, nAttachErrorTimeoutMessage);
+
+		LogString(L"CheckAttachProcess: CERR_CARGUMENT after ExitWaitForKey");
 
 		gbInShutdown = TRUE;
 		return CERR_CARGUMENT;
@@ -3033,6 +3058,11 @@ int ParseCommandLine(LPCWSTR asCmdLine)
 			eExecAction = ea_StoreCWD;
 			break;
 		}
+		else if (lstrcmpi(szArg, L"/STRUCT") == 0)
+		{
+			eExecAction = ea_DumpStruct;
+			break;
+		}
 		else if (lstrcmpi(szArg, L"/SILENT")==0)
 		{
 			gbPrefereSilentMode = true;
@@ -3071,10 +3101,12 @@ int ParseCommandLine(LPCWSTR asCmdLine)
 			break;
 		}
 		else if ((wcscmp(szArg, L"/CONFIRM")==0)
+			|| (wcscmp(szArg, L"/CONFHALT")==0)
 			|| (wcscmp(szArg, L"/ECONFIRM")==0))
 		{
-			TODO("уточнить, что нужно в gbAutoDisableConfirmExit");
-			gnConfirmExitParm = (wcscmp(szArg, L"/CONFIRM")==0) ? RConStartArgs::eConfAlways : RConStartArgs::eConfEmpty;
+			gnConfirmExitParm = (wcscmp(szArg, L"/CONFIRM")==0) ? RConStartArgs::eConfAlways
+				: (wcscmp(szArg, L"/CONFHALT")==0) ? RConStartArgs::eConfHalt
+				: RConStartArgs::eConfEmpty;
 			gbAlwaysConfirmExit = TRUE; gbAutoDisableConfirmExit = FALSE;
 		}
 		else if (wcscmp(szArg, L"/NOCONFIRM")==0)
@@ -3343,6 +3375,7 @@ int ParseCommandLine(LPCWSTR asCmdLine)
 
 					gbInShutdown = TRUE;
 					gbAlwaysConfirmExit = FALSE;
+					LogString(L"CERR_CARGUMENT: (gbAlternativeAttach && gpSrv->dwRootProcess)");
 					return CERR_CARGUMENT;
 				}
 
@@ -3359,6 +3392,7 @@ int ParseCommandLine(LPCWSTR asCmdLine)
 			}
 			else if (gpSrv->dwRootProcess == 0)
 			{
+				LogString("CERR_CARGUMENT: Attach to GUI was requested, but invalid PID specified");
 				_printf("Attach to GUI was requested, but invalid PID specified:\n");
 				_wprintf(GetCommandLineW());
 				_printf("\n");
@@ -3429,6 +3463,7 @@ int ParseCommandLine(LPCWSTR asCmdLine)
 
 			if (gnConEmuPID == 0)
 			{
+				LogString(L"CERR_CARGUMENT: Invalid GUI PID specified");
 				_printf("Invalid GUI PID specified:\n");
 				_wprintf(GetCommandLineW());
 				_printf("\n");
@@ -3454,14 +3489,22 @@ int ParseCommandLine(LPCWSTR asCmdLine)
 			}
 			else
 			{
+				wchar_t szLog[120];
 				LPCWSTR pszDescr = szArg+7;
 				if (pszDescr[0] == L'0' && (pszDescr[1] == L'x' || pszDescr[1] == L'X'))
 					pszDescr += 2; // That may be useful for calling from batch files
 				gpSrv->hGuiWnd = (HWND)wcstoul(pszDescr, &pszEnd, 16);
 				gpSrv->bRequestNewGuiWnd = FALSE;
 
-				if ((gpSrv->hGuiWnd) == NULL || !IsWindow(gpSrv->hGuiWnd))
+				BOOL isWnd = gpSrv->hGuiWnd ? IsWindow(gpSrv->hGuiWnd) : FALSE;
+				DWORD nErr = gpSrv->hGuiWnd ? GetLastError() : 0;
+
+				_wsprintf(szLog, SKIPCOUNT(szLog) L"GUI HWND=0x%08X, %s, ErrCode=%u", LODWORD(gpSrv->hGuiWnd), isWnd ? L"Valid" : L"Invalid", nErr);
+				LogString(szLog);
+
+				if (!isWnd)
 				{
+					LogString(L"CERR_CARGUMENT: Invalid GUI HWND was specified in /GHWND arg");
 					_printf("Invalid GUI HWND specified:\n");
 					_wprintf(GetCommandLineW());
 					_printf("\n");
@@ -3570,6 +3613,7 @@ int ParseCommandLine(LPCWSTR asCmdLine)
 
 			if (gpSrv->dwRootProcess == 0)
 			{
+				LogString(L"CERR_CARGUMENT: Debug of process was requested, but invalid PID specified");
 				_printf("Debug of process was requested, but invalid PID specified:\n");
 				_wprintf(GetCommandLineW());
 				_printf("\n");
@@ -3603,6 +3647,7 @@ int ParseCommandLine(LPCWSTR asCmdLine)
 			wchar_t* pszLine = lstrdup(GetCommandLineW());
 			if (!pszLine || !*pszLine)
 			{
+				LogString(L"CERR_CARGUMENT: Debug of process was requested, but GetCommandLineW failed");
 				_printf("Debug of process was requested, but GetCommandLineW failed\n");
 				_ASSERTE(FALSE);
 				return CERR_CARGUMENT;
@@ -3617,6 +3662,7 @@ int ParseCommandLine(LPCWSTR asCmdLine)
 
 			if (!pszDebugCmd || !*pszDebugCmd)
 			{
+				LogString(L"CERR_CARGUMENT: Debug of process was requested, but command was not found");
 				_printf("Debug of process was requested, but command was not found\n");
 				_ASSERTE(FALSE);
 				return CERR_CARGUMENT;
@@ -3920,6 +3966,7 @@ int ParseCommandLine(LPCWSTR asCmdLine)
 
 	if (gnRunMode == RM_UNDEFINED)
 	{
+		LogString(L"CERR_CARGUMENT: Parsing command line failed (/C argument not found)");
 		_printf("Parsing command line failed (/C argument not found):\n");
 		_wprintf(GetCommandLineW());
 		_printf("\n");
@@ -4277,7 +4324,8 @@ int ExitWaitForKey(DWORD vkKeys, LPCWSTR asConfirm, BOOL abNewLine, BOOL abDontS
 
 	int nKeyPressed = -1;
 
-	if (!vkKeys) vkKeys = VK_ESCAPE;
+	//-- Don't exit on ANY key if -new_console:c1
+	//if (!vkKeys) vkKeys = VK_ESCAPE;
 
 	// Чтобы ошибку было нормально видно
 	if (!abDontShowConsole)
@@ -4326,7 +4374,10 @@ int ExitWaitForKey(DWORD vkKeys, LPCWSTR asConfirm, BOOL abNewLine, BOOL abDontS
 
 	// Сначала почистить буфер
 	INPUT_RECORD r = {0}; DWORD dwCount = 0;
-	DWORD nPreFlush = 0, nPostFlush = 0, nPreQuit = 0;
+	DWORD nPreFlush = 0, nPostFlush = 0;
+	#ifdef _DEBUG
+	DWORD nPreQuit = 0;
+	#endif
 
 	GetNumberOfConsoleInputEvents(hIn, &nPreFlush);
 
@@ -4392,9 +4443,14 @@ int ExitWaitForKey(DWORD vkKeys, LPCWSTR asConfirm, BOOL abNewLine, BOOL abDontS
 
 		if (dwCount)
 		{
+			#ifdef _DEBUG
 			GetNumberOfConsoleInputEvents(hIn, &nPreQuit);
+			#endif
 
-			if (ReadConsoleInput(GetStdHandle(STD_INPUT_HANDLE), &r, 1, &dwCount) && dwCount)
+			// Avoid ConIn overflow, even if (vkKeys == 0)
+			if (ReadConsoleInput(GetStdHandle(STD_INPUT_HANDLE), &r, 1, &dwCount)
+				&& dwCount
+				&& vkKeys)
 			{
 				bool lbMatch = false;
 

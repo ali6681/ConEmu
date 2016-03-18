@@ -20,6 +20,123 @@ https://conemu.github.io/en/Whats_New.html
 -------------------------------------------
 
 
+2016.3.13
+* On WinXP/Vista the icon in the TitleBar was unexpectedly changed to active tab icon.
+* Intelligent selection: RClick over selected region will Paste selected text,
+  bypassing Windows' clipboard, and Reset selection region.
+* Fix garbage displayed in VCon during console startup on WinXP.
+* gh-571: `ConEmu -demote ...` starts process for the wrong user.
+* Log current SessionID, improve Desktop and Title representation.
+
+
+2016.3.10
+* TaskBar icon fixes (Overlay icon on any OS, update icon on Restart console).
+  * Option ‘Show overlay icon (Win7 and higher)’ now works on any system,
+    and need to be renamed. So, if TaskBar uses small icons, ConEmu shows
+    icon from active console via WM_GETICON.
+  * Icon was not updated on restart console with another icon.
+* Updates on Intelligent selection.
+  * Double and Triple clicks selection do not require modifiers.
+  * Click outside selection region - would reset active selection.
+  * Do `Internal Copy & Paste` if LBtn is still down and RBtn is clicked.
+  * Avoid blinking on double/triple clicks.
+  * Selection: In some cases Shift+DblClick slipped to console.
+* gh-328: Improve double-click word selection logic.
+  * Don't select space after word.
+  * Don't select pseudographics before/after alphabeticals.
+  * Trim trailing punctuations.
+  * Trim leading punctuations except dots (e.g. `.bashrc`).
+* Fix wrong quotation rules on Settings/Environment. Was not working properly:
+    echo ""
+    echo """C:\Program Files\Git\bin\git.exe"" fetch --progress ""--all"" "
+
+
+2016.3.8
+* Option ‘Retard inactive panes’ was ignored in some cases.
+* Trailing dot was not trimmed after md-style hyperlink.
+* gh-420: Do not enable by default option ‘Process start’.
+* Debugging purposes: `ConEmuC.exe -struct %ConEmuPID%`.
+* In prompt, Shift+Home/End selects command text first, second press expands selection to line start/end.
+* If selection was started from keyboard, than Del/Shift-Del/Backspace removes selected text.
+  ConEmu tries to ‘map’ single Del/BS to series of keypresses to remove whole selected block.
+  Only one-line selections are processed.
+  Shift-Del do copying to clipboard before erasion.
+* Allow persistent mouse selection. Selection will reset on Paste or Typing.
+* When selection crosses anchor, behave same way if selection was started in that direction.
+* ANSI: Implement `ESC ] 9 ; 12 ST` to store end of prompt message.
+* l10n: Update chinese translation.
+
+
+2016.3.1
+* gh-562: Environment was not applied to elevated consoles.
+* Window icon was changed by mistake when starting task with defined icon.
+  This must happen only for startup task.
+* StatusBar was not updated after root process termination.
+  Especially for consoles started with `-new_console:c0` or `-new_console:c1`.
+* gh-561: Tab macro `%d` was not trimmed to ‘Max tab width’.
+* For TaskBar with small icons show current console icon instead of ConEmu default (option ‘Admin shield’).
+* GuiMacro: `GetInfo("Root")` XML-result changes.
+
+  Ref: Maximus5/conemu-inside#8
+
+  State: Empty, NotStarted, Running, Exited.
+  PID and ExitCode: unsigned integers.
+  UpTime: milliseconds.
+  Examples below.
+
+  * If there are not consoles in ConEmu.
+
+    <Root State="Empty" />
+
+  * If console initialization is in progress (`ping localhost -t` for example).
+
+    <Root State="NotStarted" Name="ping.exe" />
+
+  * If root process was started and is running. Note, `259` in `ExitCode` is `STILL_ACTIVE` constant.
+
+    <Root State="Running" Name="ping.exe" PID="7136" ExitCode="259" UpTime="3183" />
+
+  * If root process was finished (terminated by `Ctrl+C` as example).
+
+    <Root State="Exited" Name="ping.exe" PID="7136" ExitCode="3221225786" UpTime="10195" />
+
+  * Another example for `cmd.exe` normal exit.
+
+    <Root State="Exited" Name="cmd.exe" PID="6688" ExitCode="0" UpTime="1825" />
+
+
+2016.2.28
+* Fix crash when mouse wheel was scrolled over search edit box.
+* Warning fixes (from Michael Lukashov).
+* Intelligent selection mode was not working in Far userscreen (Panels turned off).
+* gh-560: Fix true-color scrolling issues in Far 3.0.4525.
+* Alt+Numbers mode improvements.
+  * Hotkey (unassigned): Start Alt+Number mode to enter unicode symbol by its hex codebase.
+  * Allow mode start by GuiMacro: `AltNumber([Base])`.
+    * Base==0: Start Alt+Numbers in ANSI decimal mode (‘ANSI’ actually means UNICODE code points 32..255)
+    * Base==10: Start Alt+Numbers in OEM decimal mode
+    * Base==16: Start Alt+Numbers in hexadecimal mode
+  * Alt+Numbers: If mode was started by Alt+Key (user-defined), do paste on Alt release.
+  * Alt+Numbers: Show collected codebase and hints about mode in the StatusBar.
+* KeyEvents v4.3: Unicode characters were not printed correctly.
+
+
+2016.2.22
+* gh-555: Aliases support was broken (771ab79 regression).
+* Maximus5/conemu-inside#13: ConEmu-Inside position was not updated in some cases.
+* Understandable error message if bad `-loadcfgfile` was specified.
+* Don't erase default MSZ setting value, if one not found in xml.
+* Let `-new_console:c1` consoles stay open silently even on Esc/Enter.
+  When all processes in console are finished:
+  * ConEmu does not close the console automatically;
+  * Confirmation message is not written to console;
+  * All keypresses are ignored.
+  So, user may either close console via ConEmu interface
+  (kill hotkeys or close menu items), or parent process
+  (when ConEmu is working in the ‘Inside’ mode) may close
+  the console via GuiMacro `Close(0,1)`.
+
+
 2016.2.19
 * Task may be executed in the running console with `ConEmuC -c {TaskName}`.
 

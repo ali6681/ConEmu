@@ -189,6 +189,7 @@ void DebugLogMessage(HWND h, UINT m, WPARAM w, LPARAM l, int posted, BOOL extra)
 #define DEBUGLOGFILE(m)
 #define DebugLogMessage(h,m,w,l,posted,extra)
 #endif
+LPCWSTR GetMouseMsgName(UINT msg);
 
 void LogString(LPCWSTR asInfo, bool abWriteTime = true, bool abWriteLine = true);
 
@@ -231,35 +232,6 @@ HICON CreateNullIcon();
 void ShutdownGuiStep(LPCWSTR asInfo, int nParm1 = 0, int nParm2 = 0, int nParm3 = 0, int nParm4 = 0);
 void LogFocusInfo(LPCWSTR asInfo, int Level=1);
 
-COORD /*__forceinline*/ MakeCoord(int X,int Y);
-//{
-//	COORD rc; rc.X=W; rc.Y=H;
-//	return rc;
-//}
-
-POINT /*__forceinline*/ MakePoint(int X,int Y);
-
-RECT /*__forceinline*/ MakeRect(int W,int H);
-//{
-//	RECT rc; rc.left=0; rc.top=0; rc.right=W; rc.bottom=H;
-//	return rc;
-//}
-
-RECT /*__forceinline*/ MakeRect(int X1, int Y1,int X2,int Y2);
-//{
-//	RECT rc; rc.left=X1; rc.top=Y1; rc.right=X2; rc.bottom=Y2;
-//	return rc;
-//}
-
-BOOL /*__forceinline*/ CoordInRect(const COORD& c, const RECT& r);
-//{
-//	return (c.X >= r.left && c.X <= r.right) && (c.Y >= r.top && c.Y <= r.bottom);
-//}
-
-BOOL IntersectSmallRect(RECT& rc1, SMALL_RECT& rc2);
-
-bool PtDiffTest(int x1, int y1, int x2, int y2, UINT maxDx, UINT maxDy);
-bool PtDiffTest(POINT C, int aX, int aY, UINT D);
 bool PtMouseDblClickTest(const MSG& msg1, const MSG msg2);
 
 bool IntFromString(int& rnValue, LPCWSTR asValue, int anBase = 10, LPCWSTR* rsEnd = NULL);
@@ -271,7 +243,6 @@ size_t MyGetDlgItemText(HWND hDlg, WORD nID, size_t& cchMax, wchar_t*& pszText/*
 BOOL MySetDlgItemText(HWND hDlg, int nIDDlgItem, LPCTSTR lpString/*, bool bEscapes = false*/);
 bool GetColorRef(LPCWSTR pszText, COLORREF* pCR);
 
-extern const wchar_t* gsEscaped;
 //wchar_t* EscapeString(bool bSet, LPCWSTR pszSrc);
 void EscapeChar(bool bSet, LPCWSTR& pszSrc, LPWSTR& pszDst);
 
@@ -302,6 +273,11 @@ BOOL CreateProcessDemoted(LPWSTR lpCommandLine,
 							 BOOL bInheritHandles, DWORD dwCreationFlags, LPVOID lpEnvironment,
 							 LPCWSTR lpCurrentDirectory, LPSTARTUPINFOW lpStartupInfo, LPPROCESS_INFORMATION lpProcessInformation,
 							 LPDWORD pdwLastError);
+BOOL CreateProcessSheduled(bool bAsSystem, LPWSTR lpCommandLine,
+						     LPSECURITY_ATTRIBUTES lpProcessAttributes, LPSECURITY_ATTRIBUTES lpThreadAttributes,
+						     BOOL bInheritHandles, DWORD dwCreationFlags, LPVOID lpEnvironment,
+						     LPCWSTR lpCurrentDirectory, LPSTARTUPINFOW lpStartupInfo, LPPROCESS_INFORMATION lpProcessInformation,
+						     LPDWORD pdwLastError);
 
 #include "../common/RConStartArgs.h"
 
@@ -330,6 +306,7 @@ struct SettingsStorage
 
 #include "Registry.h"
 
+#include "../common/MRect.h"
 #include "../common/UnicodeChars.h"
 #include "../common/WObjects.h"
 #include "../common/CmdLine.h"

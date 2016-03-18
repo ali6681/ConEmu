@@ -668,6 +668,11 @@ void CVirtualConsole::PointersZero()
 	ResetHighlightCoords();
 }
 
+// Function called when RCon is about to start new root
+void CVirtualConsole::ResetOnStart()
+{
+	// Placeholder
+}
 
 // InitDC вызывается только при критических изменениях (размеры, шрифт, и т.п.) когда нужно пересоздать DC и Bitmap
 bool CVirtualConsole::InitDC(bool abNoDc, bool abNoWndResize, MSectionLock *pSDC, MSectionLock *pSCON)
@@ -1705,12 +1710,17 @@ void CVirtualConsole::PatInvertRect(HDC hPaintDC, const RECT& rect, HDC hFromDC,
 
 void CVirtualConsole::ResetHighlightCoords()
 {
-	ZeroStruct(m_etr);
+	ResetHighlightHyperlinks();
 	ZeroStruct(m_HighlightInfo.mrc_LastRow);
 	ZeroStruct(m_HighlightInfo.mrc_LastCol);
 	ZeroStruct(m_HighlightInfo.mrc_LastHyperlink);
 	m_HighlightInfo.m_Last.X = m_HighlightInfo.m_Last.Y = -1;
 	m_HighlightInfo.m_Cur.X = m_HighlightInfo.m_Cur.Y = -1;
+}
+
+void CVirtualConsole::ResetHighlightHyperlinks()
+{
+	ZeroStruct(m_etr);
 }
 
 bool CVirtualConsole::isHighlightAny()

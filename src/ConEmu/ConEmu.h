@@ -159,7 +159,9 @@ class CConEmuMain
 		void AddPostGuiRConMacro(LPCWSTR asGuiMacro);
 		void ExecPostGuiMacro();
 		wchar_t *mps_IconPath;
+		HICON mh_TaskbarIcon;
 		void SetWindowIcon(LPCWSTR asNewIcon);
+		void SetTaskbarIcon(HICON ahNewIcon);
 		CPushInfo *mp_PushInfo;
 		BOOL mb_DosBoxExists;
 		ConEmuInstallMode m_InstallMode;
@@ -208,7 +210,6 @@ class CConEmuMain
 	private:
 		void FillConEmuMainFont(ConEmuMainFont* pFont);
 		void UpdateGuiInfoMapping();
-		static bool UpdateGuiInfoMappingFill(CVirtualConsole* pVCon, LPARAM lParam);
 		void UpdateGuiInfoMappingActive(bool bActive, bool bUpdatePtr = true);
 		bool mb_LastTransparentFocused; // нужно для проверки gpSet->isTransparentSeparate
 	public:
@@ -700,6 +701,7 @@ class CConEmuMain
 		bool SetSkipOnFocus(bool abSkipOnFocus);
 		void SetWaitCursor(BOOL abWait);
 		void CheckNeedRepaint();
+		void EnterAltNumpadMode(UINT nBase);
 	public:
 		void ReportOldCmdVersion(DWORD nCmd, DWORD nVersion, int bFromServer, DWORD nFromProcess, u64 hFromModule, DWORD nBits);
 		bool SetParent(HWND hNewParent);
@@ -765,7 +767,7 @@ class CConEmuMain
 		void OnTimer_FrameAppearDisappear(WPARAM wParam);
 		void OnTimer_RClickPaint();
 		void OnTimer_AdmShield();
-		int mn_AdmShieldTimerCounter;
+		int mn_TBOverlayTimerCounter;
 		void OnTimer_QuakeFocus();
 		void OnActivateSplitChanged();
 		void OnTransparent();

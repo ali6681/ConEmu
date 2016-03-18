@@ -1,6 +1,6 @@
 ﻿
 /*
-Copyright (c) 2009-2015 Maximus5
+Copyright (c) 2009-2016 Maximus5
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -29,22 +29,18 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define SHOWDEBUGSTR
 
 #define HIDE_USE_EXCEPTION_INFO
-#include <windows.h>
-#include "DwmApi_Part.h"
-#include <TCHAR.H>
-//#ifdef _DEBUG
-//#include <CRTDBG.H>
-//#endif
 #include "Header.h"
-#include "DwmHelper.h"
-#include "TabBar.h"
-#include "FrameHolder.h"
 #include "ConEmu.h"
+#include "DwmApi_Part.h"
+#include "DwmHelper.h"
+#include "FrameHolder.h"
+#include "Menu.h"
 #include "Options.h"
 #include "OptionsClass.h"
 #include "Status.h"
-#include "Menu.h"
+#include "TabBar.h"
 #include "TrayIcon.h"
+#include "../common/MSetter.h"
 
 #ifdef _DEBUG
 static int _nDbgStep = 0; wchar_t _szDbg[512];
@@ -78,6 +74,7 @@ CFrameHolder::CFrameHolder()
 	mn_FrameHeight = 0;
 	mn_OurCaptionHeight = 0;
 	mn_CaptionDragHeight = 0;
+	mn_InNcPaint = 0;
 }
 
 CFrameHolder::~CFrameHolder()
@@ -178,23 +175,33 @@ bool CFrameHolder::ProcessNcMessage(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM 
 
 	case WM_PAINT:
 		DBGFUNCTION(L"WM_PAINT \n");
-		lResult = OnPaint(hWnd, NULL/*use BeginPaint,EndPaint*/, WM_PAINT); return true;
+		lResult = OnPaint(hWnd, NULL/*use BeginPaint,EndPaint*/, WM_PAINT);
+		return true;
 
 	case WM_NCPAINT:
+	{
 		DBGFUNCTION(L"WM_NCPAINT \n");
-		lResult = OnNcPaint(hWnd, uMsg, wParam, lParam); return true;
+		if (gpSetCls->isAdvLogging >= 2) LogString(L"WM_NCPAINT - begin");
+		MSetter inNcPaint(&mn_InNcPaint);
+		lResult = OnNcPaint(hWnd, uMsg, wParam, lParam);
+		if (gpSetCls->isAdvLogging >= 2) LogString(L"WM_NCPAINT - end");
+		return true;
+	}
 
 	case WM_NCACTIVATE:
 		DBGFUNCTION(L"WM_NCACTIVATE \n");
-		lResult = OnNcActivate(hWnd, uMsg, wParam, lParam); return true;
+		lResult = OnNcActivate(hWnd, uMsg, wParam, lParam);
+		return true;
 
 	case WM_NCCALCSIZE:
 		DBGFUNCTION(L"WM_NCCALCSIZE \n");
-		lResult = OnNcCalcSize(hWnd, uMsg, wParam, lParam); return true;
+		lResult = OnNcCalcSize(hWnd, uMsg, wParam, lParam);
+		return true;
 
 	case WM_NCHITTEST:
 		DBGFUNCTION(L"WM_NCHITTEST \n");
-		lResult = OnNcHitTest(hWnd, uMsg, wParam, lParam); return true;
+		lResult = OnNcHitTest(hWnd, uMsg, wParam, lParam);
+		return true;
 
 	case WM_NCLBUTTONDOWN:
 	case WM_NCLBUTTONUP:
@@ -359,11 +366,28 @@ bool CFrameHolder::ProcessNcMessage(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM 
 	//case WM_NCCREATE: gpConEmu->CheckGlassAttribute(); return false;
 
 	case 0xAE: /*WM_NCUAHDRAWCAPTION*/
-		lResult = OnDwmMessage(hWnd, uMsg, wParam, lParam); return true;
+	{
+		if (gpSetCls->isAdvLogging >= 2) LogString(L"WM_NCUAHDRAWCAPTION - begin");
+		MSetter inNcPaint(&mn_InNcPaint);
+		lResult = OnDwmMessage(hWnd, uMsg, wParam, lParam);
+		if (gpSetCls->isAdvLogging >= 2) LogString(L"WM_NCUAHDRAWCAPTION - end");
+		return true;
+	}
 	case 0xAF: /*WM_NCUAHDRAWFRAME*/
-		lResult = OnDwmMessage(hWnd, uMsg, wParam, lParam); return true;
+	{
+		if (gpSetCls->isAdvLogging >= 2) LogString(L"WM_NCUAHDRAWFRAME - begin");
+		MSetter inNcPaint(&mn_InNcPaint);
+		lResult = OnDwmMessage(hWnd, uMsg, wParam, lParam);
+		if (gpSetCls->isAdvLogging >= 2) LogString(L"WM_NCUAHDRAWFRAME - end");
+		return true;
+	}
 	case 0x31E: /*WM_DWMCOMPOSITIONCHANGED*/
-		lResult = OnDwmMessage(hWnd, uMsg, wParam, lParam); return true;
+	{
+		if (gpSetCls->isAdvLogging >= 2) LogString(L"WM_DWMCOMPOSITIONCHANGED - begin");
+		lResult = OnDwmMessage(hWnd, uMsg, wParam, lParam);
+		if (gpSetCls->isAdvLogging >= 2) LogString(L"WM_DWMCOMPOSITIONCHANGED - end");
+		return true;
+	}
 
 	case WM_SYSCOMMAND:
 		if (wParam == SC_MAXIMIZE || wParam == SC_MINIMIZE || wParam == SC_RESTORE)
@@ -892,35 +916,44 @@ void CFrameHolder::CalculateTabPosition(const RECT &rcWindow, const RECT &rcCapt
 	}
 }
 
+bool CFrameHolder::isInNcPaint()
+{
+	_ASSERTE(mn_InNcPaint>=0);
+	return (mn_InNcPaint > 0);
+}
+
 LRESULT CFrameHolder::OnNcPaint(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
-	RecalculateFrameSizes();
-
-	if (!gpSet->isTabsInCaption)
-	{
-		LRESULT lRc = DefWindowProc(hWnd, uMsg, wParam, lParam);
-		return lRc;
-	}
-
-	FrameDrawStyle fdt = gpConEmu->DrawType();
-
-	if (fdt == fdt_Aero || fdt == fdt_Win8)
-	{
-		LRESULT lRc = DefWindowProc(hWnd, uMsg, wParam, lParam);
-		//TODO: Может быть на "стекле" сразу рисовать, а не в WM_PAINT?
-		return lRc;
-	}
-
-	if (!gpSet->isTabs)
-	{
-		return DefWindowProc(hWnd, uMsg, wParam, lParam);
-	}
-
-
+	LRESULT lRc = 0;
+	FrameDrawStyle fdt;
 	RECT dirty_box, dirty, wr = {}, tr = {}, cr = {}, xorRect;
 	BOOL fRegionOwner = FALSE;
 	HDC hdc;
 	HRGN hrgn = (HRGN)wParam;
+	PaintDC dc = {};
+
+	RecalculateFrameSizes();
+
+	if (!gpSet->isTabsInCaption)
+	{
+		lRc = DefWindowProc(hWnd, uMsg, wParam, lParam);
+		goto wrap;
+	}
+
+	fdt = gpConEmu->DrawType();
+
+	if (fdt == fdt_Aero || fdt == fdt_Win8)
+	{
+		lRc = ::DefWindowProc(hWnd, uMsg, wParam, lParam);
+		//TODO: Может быть на "стекле" сразу рисовать, а не в WM_PAINT?
+		goto wrap;
+	}
+
+	if (!gpSet->isTabs)
+	{
+		lRc = ::DefWindowProc(hWnd, uMsg, wParam, lParam);
+	}
+
 
 	GetWindowRect(hWnd, &wr);
 	CalculateCaptionPosition(wr, &cr);
@@ -1003,7 +1036,6 @@ LRESULT CFrameHolder::OnNcPaint(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lPar
 	//HRGN hdcrgn = CreateRectRgn(cr.left, cr.top, cr.right, tr.bottom);
 	//hdc = GetDCEx(hWnd, hdcrgn, DCX_INTERSECTRGN);
 
-	PaintDC dc = {};
 	gpConEmu->BeginBufferedPaint(hdc, cr, dc);
 
 	gpConEmu->mp_TabBar->PaintTabs(dc, cr, tr);
@@ -1049,7 +1081,9 @@ LRESULT CFrameHolder::OnNcPaint(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lPar
 	if(fRegionOwner)
 		DeleteObject(hrgn);
 
-	return 0;
+	lRc = 0;
+wrap:
+	return lRc;
 }
 
 LRESULT CFrameHolder::OnNcActivate(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)

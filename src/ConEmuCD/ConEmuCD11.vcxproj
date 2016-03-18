@@ -819,6 +819,7 @@
     <ClInclude Include="..\common\Memory.h" />
     <ClInclude Include="..\common\MFileLog.h" />
     <ClInclude Include="..\common\MMap.h" />
+    <ClInclude Include="..\common\MModule.h" />
     <ClInclude Include="..\common\Monitors.h" />
     <ClInclude Include="..\common\MSection.h" />
     <ClInclude Include="..\common\MSectionSimple.h" />
@@ -838,6 +839,7 @@
     <ClInclude Include="..\common\WFiles.h" />
     <ClInclude Include="..\common\WModuleCheck.h" />
     <ClInclude Include="..\common\WObjects.h" />
+    <ClInclude Include="..\common\WSession.h" />
     <ClInclude Include="..\common\WThreads.h" />
     <ClInclude Include="..\common\WUser.h" />
     <ClInclude Include="..\ConEmuHk\Injects.h" />
@@ -850,6 +852,7 @@
     <ClInclude Include="ExitCodes.h" />
     <ClInclude Include="GuiHooks.h" />
     <ClInclude Include="GuiMacro.h" />
+    <ClInclude Include="MapDump.h" />
     <ClInclude Include="Queue.h" />
     <ClInclude Include="resource.h" />
     <CustomBuild Include="header.h">
@@ -895,6 +898,7 @@
     <ClCompile Include="..\common\MConHandle.cpp" />
     <ClCompile Include="..\common\Memory.cpp" />
     <ClCompile Include="..\common\MFileLog.cpp" />
+    <ClCompile Include="..\common\MModule.cpp" />
     <ClCompile Include="..\common\Monitors.cpp" />
     <ClCompile Include="..\common\MSection.cpp" />
     <ClCompile Include="..\common\MSectionSimple.cpp" />
@@ -910,6 +914,7 @@
     <ClCompile Include="..\common\WFiles.cpp" />
     <ClCompile Include="..\common\WModuleCheck.cpp" />
     <ClCompile Include="..\common\WObjects.cpp" />
+    <ClCompile Include="..\common\WSession.cpp" />
     <ClCompile Include="..\common\WThreads.cpp" />
     <ClCompile Include="..\common\WUser.cpp" />
     <ClCompile Include="..\ConEmuHk\Injects.cpp" />
@@ -923,6 +928,7 @@
     <ClCompile Include="GuiHooks.cpp" />
     <ClCompile Include="GuiMacro.cpp" />
     <ClCompile Include="InjectRemote.cpp" />
+    <ClCompile Include="MapDump.cpp" />
     <ClCompile Include="Queue.cpp" />
     <ClCompile Include="SrvCommands.cpp" />
     <ClCompile Include="SrvPipes.cpp" />

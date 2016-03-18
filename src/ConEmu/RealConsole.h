@@ -88,6 +88,8 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define CONSOLE_BLOCK_SELECTION 0x0100 // selecting text (standard mode)
 #define CONSOLE_TEXT_SELECTION 0x0200 // selecting text (stream mode)
 #define CONSOLE_DBLCLICK_SELECTION 0x0400 // двойным кликом выделено слово, пропустить WM_LBUTTONUP
+#define CONSOLE_LEFT_ANCHOR 0x0800 // If selection was started rightward
+#define CONSOLE_RIGHT_ANCHOR 0x1000 // If selection was started leftward
 #define CONSOLE_KEYMOD_MASK 0xFF000000 // Здесь хранится модификатор, которым начали выделение мышкой
 
 #define PROCESS_WAIT_START_TIME RELEASEDEBUGTEST(1000,1000)
@@ -472,6 +474,7 @@ class CRealConsole
 		void GetConsoleScreenBufferInfo(CONSOLE_SCREEN_BUFFER_INFO* sbi);
 		void GetConsoleInfo(ConsoleInfoArg* pInfo);
 		//void GetConsoleCursorPos(COORD *pcr);
+		bool QueryPromptStart(COORD *cr);
 		void GetConsoleCursorInfo(CONSOLE_CURSOR_INFO *ci, COORD *cr = NULL);
 		DWORD GetConsoleCP();
 		DWORD GetConsoleOutputCP();
@@ -490,6 +493,7 @@ class CRealConsole
 		void SetFarStatus(DWORD nNewFarStatus);
 		bool GetProcessInformation(DWORD nPID, ConProcess* rpProcess = NULL);
 		LPCWSTR GetConsoleInfo(LPCWSTR asWhat, CEStr& rsInfo);
+		LPCWSTR GetActiveProcessInfo(CEStr& rsInfo);
 		DWORD GetActivePID(ConProcess* rpProcess = NULL);
 		DWORD GetInteractivePID();
 		DWORD GetLoadedPID();
@@ -527,7 +531,8 @@ class CRealConsole
 		bool isPaused();
 		CEPauseCmd Pause(CEPauseCmd cmd);
 		void AutoCopyTimer(); // Чтобы разрулить "Auto Copy" & "Double click - select word"
-		void StartSelection(BOOL abTextMode, SHORT anX=-1, SHORT anY=-1, BOOL abByMouse=FALSE);
+		void StartSelection(BOOL abTextMode, SHORT anX=-1, SHORT anY=-1, BOOL abByMouse=FALSE, DWORD anAnchorFlag=0);
+		void ChangeSelectionByKey(UINT vkKey, bool bCtrl, bool bShift);
 		void ExpandSelection(SHORT anX, SHORT anY);
 		bool DoSelectionCopy(CECopyMode CopyMode = cm_CopySel, BYTE nFormat = CTSFormatDefault, LPCWSTR pszDstFile = NULL);
 		void DoSelectionStop();
@@ -547,6 +552,7 @@ class CRealConsole
 		void SetInitEnvCommands(CESERVER_REQ_SRVSTARTSTOPRET& pRet);
 		BOOL RecreateProcess(RConStartArgs *args);
 		void GetConsoleData(wchar_t* pChar, CharAttr* pAttr, int nWidth, int nHeight, ConEmuTextRange& etr);
+		void ResetHighlightHyperlinks();
 		ExpandTextRangeType GetLastTextRangeType();
 		bool IsFarHyperlinkAllowed(bool abFarRequired);
 	private:
@@ -790,6 +796,8 @@ class CRealConsole
 		wchar_t ms_RootProcessName[MAX_PATH];
 		int mn_RootProcessIcon;
 		bool mb_NeedLoadRootProcessIcon;
+		CESERVER_ROOT_INFO m_RootInfo;
+		void UpdateRootInfo(const CESERVER_ROOT_INFO& RootInfo);
 		// Replace in asCmd some env.vars (!ConEmuBackHWND! and so on)
 		//wchar_t* ParseConEmuSubst(LPCWSTR asCmd);
 		//wchar_t* mpsz_CmdBuffer;
@@ -822,7 +830,6 @@ class CRealConsole
 			HANDLE hServerProcess; // Handle процесса сервера
 			BOOL   bBackActivated; // Main server was activated back, when AltServer was closed
 		} m_ServerClosing;
-		int mn_ShellExitCode;
 		//
 		MSection csPRC; //DWORD ncsTPRC;
 		MArray<ConProcess> m_Processes;

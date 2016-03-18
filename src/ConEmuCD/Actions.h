@@ -62,6 +62,7 @@ enum ConEmuExecAction
 	ea_OutEcho,    // echo "string" with ANSI processing
 	ea_OutType,    // print file contents with ANSI processing
 	ea_StoreCWD,   // store current console work dir
+	ea_DumpStruct, // dump file mapping contents
 };
 
 int  DoExecAction(ConEmuExecAction eExecAction, LPCWSTR asCmdArg /* rest of cmdline */, MacroInstance& Inst);

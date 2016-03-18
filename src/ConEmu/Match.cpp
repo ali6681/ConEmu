@@ -1,6 +1,6 @@
 ﻿
 /*
-Copyright (c) 2014-2015 Maximus5
+Copyright (c) 2014-2016 Maximus5
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -623,20 +623,64 @@ bool CMatch::MatchWord(LPCWSTR asLine/*This may be NOT 0-terminated*/, int anLin
 	if (!asLine || !*asLine || (anFrom < 0) || (anLineLen <= anFrom))
 		return false;
 
-	TODO("Setting to define word-break characters (was gh issue)");
+	TODO("Setting to define word-break characters (was gh-328 issue)");
+
+	struct cmp {
+		static bool isChar(ucs32 inChar)
+		{
+			return (isCharSpace(inChar) || isCharSeparate(inChar));
+		}
+	};
+
+	bool (*cmpFunc)(ucs32 inChar) = isCharNonWord;
+	// If user double-clicks on "═════════════" - try to select this block of characters?
+	if (isCharNonWord(asLine[rnStart]))
+		cmpFunc = cmp::isChar;
 
 	while ((rnStart > 0)
-		&& !(isCharSpace(asLine[rnStart-1]) || isCharSeparate(asLine[rnStart-1])))
+		&& !(cmpFunc(asLine[rnStart-1])))
 	{
 		rnStart--;
 	}
 
 	while (((rnEnd+1) < anLineLen)
-		&& !(isCharSpace(asLine[rnEnd]) || isCharSeparate(asLine[rnEnd])))
+		&& !(cmpFunc(asLine[rnEnd+1])))
 	{
 		rnEnd++;
 	}
 
+	// Now trim trailing punctuation
+	while (((rnEnd-1) > rnStart)
+		&& isCharPunctuation(asLine[rnEnd]))
+	{
+		rnEnd--;
+	}
+
+	// Trim leading punctuation except of "." (accept dot-files like ".bashrc")
+	while (((rnStart+1) < rnEnd)
+		&& (asLine[rnStart] != L'.') && isCharPunctuation(asLine[rnStart]))
+	{
+		rnStart++;
+	}
+
+	// If part contains (leading) brackets - don't trim trailing brackets
+	const wchar_t szLeftBkt[] = L"<({[", szRightBkt[] = L">)}]";
+	for (int i = rnStart; i <= rnEnd; i++)
+	{
+		if (wcschr(szLeftBkt, asLine[i]))
+		{
+			// Include trailing brackets
+			while (((rnEnd+1) < anLineLen)
+				&& wcschr(szRightBkt, asLine[rnEnd+1]))
+			{
+				rnEnd++;
+			}
+			// Done
+			break;
+		}
+	}
+
+	// Done
 	StoreMatchText(NULL, NULL);
 
 	return true;
@@ -775,6 +819,7 @@ bool CMatch::MatchAny()
 		LPCWSTR pszDelim = (wcsncmp(m_SrcLine.ms_Val+mn_MatchLeft, L"file://", 7) == 0) ? pszUrlFileDelim : pszUrlDelim;
 		while (((mn_MatchRight+1) < mn_SrcLength) && !wcschr(pszDelim, m_SrcLine.ms_Val[mn_MatchRight+1]))
 			mn_MatchRight++;
+		DEBUGTEST(int i4break = 0);
 	}
 	else while ((mn_MatchRight+1) < mn_SrcLength)
 	{
@@ -1025,6 +1070,9 @@ bool CMatch::MatchAny()
 	{
 		// Считаем, что OK
 		bMaybeMail = false;
+		// Cut off ending punctuators
+		if (wcschr(pszPuctuators, m_SrcLine.ms_Val[mn_MatchRight]))
+			mn_MatchRight--;
 		// Cut off ending bracket if it is
 		if (wcschr(pszEndBrackets, m_SrcLine.ms_Val[mn_MatchRight]))
 			mn_MatchRight--;

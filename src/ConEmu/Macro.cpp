@@ -31,6 +31,8 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define SHOWDEBUGSTR
 
 #include "Header.h"
+#include "../common/MGuiMacro.h"
+#include "../common/MStrEsc.h"
 #include "../common/WFiles.h"
 
 #include "RealConsole.h"
@@ -135,6 +137,8 @@ namespace ConEmuMacro
 	LPWSTR About(GuiMacro* p, CRealConsole* apRCon, bool abFromPlugin);
 	// AffinityPriority([Affinity,Priority])
 	LPWSTR AffinityPriority(GuiMacro* p, CRealConsole* apRCon, bool abFromPlugin);
+	// AltNumber([Base])
+	LPWSTR AltNumber(GuiMacro* p, CRealConsole* apRCon, bool abFromPlugin);
 	// Attach - console or ChildGui by PID
 	LPWSTR Attach(GuiMacro* p, CRealConsole* apRCon, bool abFromPlugin);
 	// Break (0=CtrlC; 1=CtrlBreak)
@@ -261,6 +265,7 @@ namespace ConEmuMacro
 		// List all functions
 		{About, {L"About"}, gmf_MainThread},
 		{AffinityPriority, {L"AffinityPriority"}, gmf_PostponeWhenActive|gmf_MainThread},
+		{AltNumber, {L"AltNumber", L"AltNumbers", L"AltNumpad"}},
 		{Attach, {L"Attach"}, gmf_MainThread},
 		{Break, {L"Break"}},
 		{Close, {L"Close"}, gmf_MainThread},
@@ -778,9 +783,8 @@ GuiMacro* ConEmuMacro::GetNextMacro(LPWSTR& asString, bool abConvert, wchar_t** 
 				// то ее удобнее показывать как "Verbatim", иначе - C-String
 				// Однозначно показывать как C-String нужно те строки, которые
 				// содержат переводы строк, Esc, табуляции и пр.
-				_ASSERTE(gsEscaped[0] == L'\\');
-				bool bSlash = (wcschr(a.Str, L'\\') != NULL);
-				bool bEsc = (wcspbrk(a.Str, gsEscaped+1) != NULL) || (wcschr(a.Str, L'"') != NULL);
+				bool bSlash = false, bEsc = false;
+				CheckStrForSpecials(a.Str, &bSlash, &bEsc);
 				if (!(bEsc || bSlash) || bEsc)
 					a.Type = gmt_Str;
 			}
@@ -1418,6 +1422,16 @@ LPWSTR ConEmuMacro::AffinityPriority(GuiMacro* p, CRealConsole* apRCon, bool abF
 		pszRc = lstrdup(L"OK");
 
 	return pszRc ? pszRc : lstrdup(L"FAILED");
+}
+
+// AltNumber([Base]) -- Base is 0 or 10 or 16
+LPWSTR ConEmuMacro::AltNumber(GuiMacro* p, CRealConsole* apRCon, bool abFromPlugin)
+{
+	int nBase = 0;
+	if (!p->GetIntArg(0, nBase) || !(nBase == 0 || nBase == 10 || nBase == 16))
+		nBase = 16;
+	gpConEmu->EnterAltNumpadMode(nBase);
+	return lstrdup(L"OK");
 }
 
 LPWSTR ConEmuMacro::Attach(GuiMacro* p, CRealConsole* apRCon, bool abFromPlugin)
@@ -2351,6 +2365,8 @@ LPWSTR ConEmuMacro::Keys(GuiMacro* p, CRealConsole* apRCon, bool abFromPlugin)
 
 	while (p->GetStrArg(iKeyNo++, pszKey))
 	{
+		// GetStrArg never returns true & NULL
+		_ASSERTE(pszKey);
 		// Modifiers (for Example RCtrl+Shift+LAlt)
 		DWORD dwControlState = 0, dwScan = 0;
 		int iScanCode = -1;
@@ -2826,7 +2842,14 @@ LPWSTR ConEmuMacro::Select(GuiMacro* p, CRealConsole* apRCon, bool abFromPlugin)
 			cr.X--;
 	}
 
-	apRCon->StartSelection(bText, cr.X, cr.Y);
+	DWORD nAnchorFlag =
+		(nDY < 0) ? CONSOLE_RIGHT_ANCHOR :
+		(nDY > 0) ? CONSOLE_LEFT_ANCHOR :
+		(nDX < 0) ? CONSOLE_RIGHT_ANCHOR :
+		(nDX > 0) ? CONSOLE_LEFT_ANCHOR :
+		0;
+
+	apRCon->StartSelection(bText, cr.X, cr.Y, false, nAnchorFlag);
 
 	if (nType == 1)
 	{
@@ -2836,7 +2859,7 @@ LPWSTR ConEmuMacro::Select(GuiMacro* p, CRealConsole* apRCon, bool abFromPlugin)
 	else if (nType == 0)
 	{
 		if (nHomeEnd)
-			apRCon->ExpandSelection((nHomeEnd < 0) ? 0 : apRCon->BufferWidth()-1, cr.Y);
+			apRCon->ChangeSelectionByKey(((nHomeEnd < 0) ? VK_HOME : VK_END), false, true);
 	}
 
 	return lstrdup(L"OK");
@@ -2905,6 +2928,8 @@ LPWSTR ConEmuMacro::GetInfo(GuiMacro* p, CRealConsole* apRCon, bool abFromPlugin
 		// RCon related
 		else if (apRCon)
 			pszVal = apRCon->GetConsoleInfo(pszName, szBuf);
+		else if (lstrcmpi(pszName, L"Root") == 0 || lstrcmpi(pszName, L"RootInfo") == 0)
+			pszVal = CreateRootInfoXml(NULL/*asRootExeName*/, NULL, szBuf);
 
 		// Concat the string
 		lstrmerge(&pszResult, pszResult ? L"\n" : NULL, pszVal);

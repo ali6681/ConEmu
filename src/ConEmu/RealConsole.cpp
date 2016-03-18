@@ -45,6 +45,7 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "../common/ConEmuCheck.h"
 #include "../common/ConEmuPipeMode.h"
 #include "../common/Execute.h"
+#include "../common/MGuiMacro.h"
 #include "../common/MFileLog.h"
 #include "../common/MSectionSimple.h"
 #include "../common/MSetter.h"
@@ -63,7 +64,7 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "ConfirmDlg.h"
 #include "DynDialog.h"
 #include "Inside.h"
-#include "LngDataEnum.h"
+#include "LngRc.h"
 #include "Macro.h"
 #include "Menu.h"
 #include "MyClipboard.h"
@@ -85,6 +86,8 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define DEBUGSTRDRAW(s) //DEBUGSTR(s)
 #define DEBUGSTRSTATUS(s) DEBUGSTR(s)
 #define DEBUGSTRINPUT(s) //DEBUGSTR(s)
+#define DEBUGSTRINPUTMSG(s) DEBUGSTR(s)
+#define DEBUGSTRINPUTLL(s) DEBUGSTR(s)
 #define DEBUGSTRWHEEL(s) //DEBUGSTR(s)
 #define DEBUGSTRINPUTPIPE(s) //DEBUGSTR(s)
 #define DEBUGSTRSIZE(s) //DEBUGSTR(s)
@@ -366,7 +369,8 @@ bool CRealConsole::Construct(CVirtualConsole* apVCon, RConStartArgs *args)
 	mb_DebugLocked = FALSE;
 	#endif
 
-	mn_ShellExitCode = STILL_ACTIVE;
+	ZeroStruct(m_RootInfo);
+	//m_RootInfo.nExitCode = STILL_ACTIVE;
 	ZeroStruct(m_ServerClosing);
 	ZeroStruct(m_Args);
 	ms_RootProcessName[0] = 0;
@@ -1403,7 +1407,8 @@ void CRealConsole::SetInitEnvCommands(CESERVER_REQ_SRVSTARTSTOPRET& pRet)
 	}
 
 	size_t cchData = 0;
-	pRet.EnvCommands.Set(env.Allocate(&cchData), cchData);
+	CEStr EnvData(env.Allocate(&cchData));
+	pRet.EnvCommands.Set(EnvData.Detach(), cchData);
 
 	// Current palette
 	_ASSERTE(pRet.PaletteName.psz == NULL);
@@ -2223,19 +2228,30 @@ bool CRealConsole::PostConsoleEvent(INPUT_RECORD* piRec, bool bFromIME /*= false
 		}
 		#endif
 
-		// Запомним
-		m_LastMouse.dwMousePosition   = piRec->Event.MouseEvent.dwMousePosition;
-		m_LastMouse.dwEventFlags      = piRec->Event.MouseEvent.dwEventFlags;
-		m_LastMouse.dwButtonState     = piRec->Event.MouseEvent.dwButtonState;
-		m_LastMouse.dwControlKeyState = piRec->Event.MouseEvent.dwControlKeyState;
+		if (((m_LastMouse.dwEventFlags & MOUSE_MOVED) && !(piRec->Event.MouseEvent.dwEventFlags & MOUSE_MOVED))
+			|| (!(m_LastMouse.dwEventFlags & MOUSE_MOVED)
+					&& (0 != memcmp(&m_LastMouse, &piRec->Event.MouseEvent, sizeof(m_LastMouse))))
+			)
+		{
+			#ifdef _DEBUG
+			const MOUSE_EVENT_RECORD& me = piRec->Event.MouseEvent;
+			wchar_t szDbg[120];
+			_wsprintf(szDbg, SKIPCOUNT(szDbg) L"RCon::Mouse(Send) event at {%i,%i} Btns=x%X Keys=x%X %s",
+				me.dwMousePosition.X, me.dwMousePosition.Y, me.dwButtonState, me.dwControlKeyState,
+				(me.dwEventFlags & MOUSE_MOVED) ? L"Moved" : L"");
+			DEBUGSTRINPUTLL(szDbg);
+			#endif
+		}
+
+		// Store last mouse event
+		m_LastMouse = piRec->Event.MouseEvent;
+		//m_LastMouse.dwMousePosition   = piRec->Event.MouseEvent.dwMousePosition;
+		//m_LastMouse.dwEventFlags      = piRec->Event.MouseEvent.dwEventFlags;
+		//m_LastMouse.dwButtonState     = piRec->Event.MouseEvent.dwButtonState;
+		//m_LastMouse.dwControlKeyState = piRec->Event.MouseEvent.dwControlKeyState;
 		#ifdef _DEBUG
 		nLastBtnState = piRec->Event.MouseEvent.dwButtonState;
 		#endif
-		//#ifdef _DEBUG
-		//wchar_t szDbg[60];
-		//swprintf_c(szDbg, L"ConEmu.Mouse event at: {%ix%i}\n", m_LastMouse.dwMousePosition.X, m_LastMouse.dwMousePosition.Y);
-		//DEBUGSTRINPUT(szDbg);
-		//#endif
 	}
 	else if (piRec->EventType == KEY_EVENT)
 	{
@@ -2301,7 +2317,7 @@ bool CRealConsole::PostConsoleEvent(INPUT_RECORD* piRec, bool bFromIME /*= false
 		if (!piRec->Event.KeyEvent.wRepeatCount)
 		{
 			_ASSERTE(piRec->Event.KeyEvent.wRepeatCount!=0);
-			piRec->Event.KeyEvent.wRepeatCount = 0;
+			piRec->Event.KeyEvent.wRepeatCount = 1;
 		}
 
 		// Keyboard/Output/Delay performance
@@ -3470,7 +3486,7 @@ HKEY CRealConsole::PrepareConsoleRegistryKey(LPCWSTR asSubKey)
 	LONG lRegRc;
 
 
-	CEStr lsKey = JoinPath(L"Console", asSubKey); // Default is "Console\\ConEmu"
+	CEStr lsKey(JoinPath(L"Console", asSubKey)); // Default is "Console\\ConEmu"
 	if (0 == (lRegRc = RegCreateKeyEx(HKEY_CURRENT_USER, lsKey, 0, NULL, 0, KEY_ALL_ACCESS, NULL, &hkConsole, NULL)))
 	{
 		DWORD nSize = sizeof(DWORD), nValue, nType, nNewValue;
@@ -3532,7 +3548,7 @@ HKEY CRealConsole::PrepareConsoleRegistryKey(LPCWSTR asSubKey)
 	}
 	else
 	{
-		CEStr lsMsg = lstrmerge(L"Failed to create/open registry key", L"\n[HKCU\\", lsKey, L"]");
+		CEStr lsMsg(L"Failed to create/open registry key", L"\n[HKCU\\", lsKey, L"]");
 		DisplayLastError(lsMsg, lRegRc);
 		hkConsole = NULL;
 	}
@@ -4003,7 +4019,7 @@ bool CRealConsole::StartDebugger(StartDebugType sdt)
 			else
 			{
 				// В режиме "Дамп дерева процессов" нас интересует и дамп текущего процесса ConEmu.exe
-				CEStr lsPID(lstrdup(_itow(GetCurrentProcessId(), szExe, 10)));
+				CEStr lsPID((LPCWSTR)_itow(GetCurrentProcessId(), szExe, 10));
 				ConProcess* pPrc = NULL;
 				int nCount = GetProcesses(&pPrc, false/*ClientOnly*/);
 				if (!pPrc || (nCount < 1))
@@ -4128,13 +4144,16 @@ void CRealConsole::SetSwitchActiveServer(bool bSwitch, CRealConsole::SwitchActiv
 
 void CRealConsole::ResetVarsOnStart()
 {
+	mp_VCon->ResetOnStart();
+
 	mb_InCloseConsole = FALSE;
 	mb_RecreateFailed = FALSE;
 	SetSwitchActiveServer(false, eResetEvent, eResetEvent);
 	//Drop flag after Restart console
 	mb_InPostCloseMacro = false;
 	//mb_WasStartDetached = FALSE; -- не сбрасывать, на него смотрит и isDetached()
-	mn_ShellExitCode = STILL_ACTIVE;
+	ZeroStruct(m_RootInfo);
+	//m_RootInfo.nExitCode = STILL_ACTIVE;
 	ZeroStruct(m_ServerClosing);
 	mn_StartTick = mn_RunTime = 0;
 	mn_DeactivateTick = 0;
@@ -4144,6 +4163,12 @@ void CRealConsole::ResetVarsOnStart()
 	hConWnd = NULL;
 
 	mn_FarNoPanelsCheck = 0;
+
+	// Don't show in VCon invalid data
+	if (mp_RBuf)
+		mp_RBuf->ResetConData();
+	// At the moment of start, Primary buffer is expected to be active
+	_ASSERTE(mp_ABuf == mp_RBuf);
 
 	if (mp_XTerm)
 		mp_XTerm->Reset();
@@ -4172,6 +4197,16 @@ void CRealConsole::SetRootProcessName(LPCWSTR asProcessName)
 		mn_RootProcessIcon = -1;
 		lstrcpyn(ms_RootProcessName, asProcessName, countof(ms_RootProcessName));
 		mb_NeedLoadRootProcessIcon = true;
+	}
+}
+
+void CRealConsole::UpdateRootInfo(const CESERVER_ROOT_INFO& RootInfo)
+{
+	m_RootInfo = RootInfo;
+
+	if (isActive(false))
+	{
+		mp_ConEmu->mp_Status->UpdateStatusBar(true);
 	}
 }
 
@@ -4339,6 +4374,11 @@ BOOL CRealConsole::StartProcess()
 	{
 		bConHostLocked = mp_ConEmu->LockConhostStart();
 	}
+
+
+	// In case if console was restarted with another icon (shell/task)
+	if (isActive(false))
+		mp_ConEmu->Taskbar_UpdateOverlay();
 
 
 	bool bAllowDefaultCmd = (!m_Args.pszSpecialCmd || !*m_Args.pszSpecialCmd);
@@ -4611,6 +4651,8 @@ BOOL CRealConsole::StartProcessInt(LPCWSTR& lpszCmd, wchar_t*& psCurCmd, LPCWSTR
 	//lstrcpy(psCurCmd, mp_ConEmu->ms_ConEmuCExeName);
 	_wcscat_c(psCurCmd, nLen, L"\" ");
 
+	if (m_UseLogs) _wcscat_c(psCurCmd, nLen, (m_UseLogs == 3) ? L" /LOG3" : (m_UseLogs == 2) ? L" /LOG2" : L" /LOG");
+
 	if ((m_Args.RunAsAdministrator == crb_On) && !mp_ConEmu->mb_IsUacAdmin)
 	{
 		m_Args.Detached = crb_On;
@@ -4659,7 +4701,6 @@ BOOL CRealConsole::StartProcessInt(LPCWSTR& lpszCmd, wchar_t*& psCurCmd, LPCWSTR
 		wcscat(psCurCmd, gpSet->FontFile);
 		wcscat(psCurCmd, L"\"");
 	}*/
-	if (m_UseLogs) _wcscat_c(psCurCmd, nLen, (m_UseLogs==3) ? L" /LOG3" : (m_UseLogs==2) ? L" /LOG2" : L" /LOG");
 
 	if (!gpSet->isConVisible) _wcscat_c(psCurCmd, nLen, L" /HIDE");
 
@@ -5018,8 +5059,15 @@ bool CRealConsole::OnMouse(UINT messg, WPARAM wParam, int x, int y, bool abForce
 #define WM_MOUSEHWHEEL                  0x020E
 #endif
 #ifdef _DEBUG
-	wchar_t szDbg[60]; _wsprintf(szDbg, SKIPLEN(countof(szDbg)) L"RCon::MouseEvent at DC {%ix%i}\n", x,y);
-	DEBUGSTRINPUT(szDbg);
+	wchar_t szDbg[60];
+	_wsprintf(szDbg, SKIPLEN(countof(szDbg)) L"RCon::Mouse(messg=%s) at DC {%ix%i} %s",
+		GetMouseMsgName(messg), x, y, abForceSend ? L"ForceSend" : L"");
+	static UINT lastMsg = 0;
+	if ((messg != WM_MOUSEMOVE) || (messg != lastMsg))
+	{
+		DEBUGSTRINPUTMSG(szDbg);
+	}
+	lastMsg = messg;
 #endif
 
 	if (!this || !hConWnd)
@@ -5125,10 +5173,9 @@ bool CRealConsole::OnMouse(UINT messg, WPARAM wParam, int x, int y, bool abForce
 				{
 				wchar_t szInfo[100];
 				_wsprintf(szInfo, SKIPCOUNT(szInfo) L"Changing prompt position by LClick: {%i,%i} Force=%u Margin=%u", pIn->Prompt.xPos, pIn->Prompt.yPos, pIn->Prompt.Force, pIn->Prompt.BashMargin);
+				DEBUGSTRCLICKPOS(szInfo);
 				if (mp_Log)
 					LogString(szInfo);
-				else
-					DEBUGSTRCLICKPOS(szInfo);
 				}
 
 				CESERVER_REQ* pOut = ExecuteHkCmd(nActivePID, pIn, ghWnd);
@@ -5438,9 +5485,14 @@ void CRealConsole::PostMouseEvent(UINT messg, WPARAM wParam, COORD crMouse, bool
 	PostConsoleEvent(&r);
 }
 
-void CRealConsole::StartSelection(BOOL abTextMode, SHORT anX/*=-1*/, SHORT anY/*=-1*/, BOOL abByMouse/*=FALSE*/)
+void CRealConsole::StartSelection(BOOL abTextMode, SHORT anX/*=-1*/, SHORT anY/*=-1*/, BOOL abByMouse/*=FALSE*/, DWORD anAnchorFlag/*=0*/)
 {
-	mp_ABuf->StartSelection(abTextMode, anX, anY, abByMouse);
+	mp_ABuf->StartSelection(abTextMode, anX, anY, abByMouse, 0, NULL, anAnchorFlag);
+}
+
+void CRealConsole::ChangeSelectionByKey(UINT vkKey, bool bCtrl, bool bShift)
+{
+	mp_ABuf->ChangeSelectionByKey(vkKey, bCtrl, bShift);
 }
 
 void CRealConsole::ExpandSelection(SHORT anX, SHORT anY)
@@ -5456,7 +5508,7 @@ void CRealConsole::DoSelectionStop()
 void CRealConsole::OnSelectionChanged()
 {
 	// Show current selection state in the Status bar
-	wchar_t szSelInfo[128] = L"";
+	CEStr szSelInfo;
 	CONSOLE_SELECTION_INFO sel = {};
 	if (mp_ABuf->GetConsoleSelectionInfo(&sel))
 	{
@@ -5479,11 +5531,19 @@ void CRealConsole::OnSelectionChanged()
 		bool bStreamMode = ((sel.dwFlags & CONSOLE_TEXT_SELECTION) != 0);
 		int  nCellsCount = mp_ABuf->GetSelectionCellsCount();
 
-		_wsprintf(szSelInfo, SKIPLEN(countof(szSelInfo)) L"%i chars {%i,%i}-{%i,%i} %s selection",
-			nCellsCount,
+		wchar_t szCoords[128] = L"", szChars[20];
+		_wsprintf(szCoords, SKIPLEN(countof(szCoords)) L"{%i,%i}-{%i,%i}:{%i,%i}",
 			sel.srSelection.Left+1, sel.srSelection.Top+1,
 			sel.srSelection.Right+1, sel.srSelection.Bottom+1,
-			bStreamMode ? L"stream" : L"block");
+			sel.dwSelectionAnchor.X+1, sel.dwSelectionAnchor.Y+1);
+		szSelInfo = lstrmerge(
+			_ltow(nCellsCount, szChars, 10),
+			CLngRc::getRsrc(lng_SelChars/*" chars "*/),
+			szCoords,
+			bStreamMode
+				? CLngRc::getRsrc(lng_SelStream/*" stream selection"*/)
+				: CLngRc::getRsrc(lng_SelBlock/*" block selection"*/)
+			);
 	}
 	SetConStatus(szSelInfo);
 }
@@ -7164,7 +7224,8 @@ void CRealConsole::OnServerClosing(DWORD anSrvPID, int* pnShellExitCode)
 	// Shell exit code
 	if (pnShellExitCode)
 	{
-		mn_ShellExitCode = *pnShellExitCode;
+		m_RootInfo.nExitCode = *pnShellExitCode;
+		m_RootInfo.bRunning = false;
 	}
 }
 
@@ -7760,42 +7821,14 @@ LPCWSTR CRealConsole::GetConsoleInfo(LPCWSTR asWhat, CEStr& rsInfo)
 		if (dwServerPID)
 			pOut = ExecuteSrvCmd(dwServerPID, pIn, ghWnd);
 
-		// Return JSON
-		rsInfo.Set(L"<Root\n");
+		// Return <Root ... /> xml
+		CreateRootInfoXml(GetRootProcessName(),
+			(pOut && (pOut->DataSize() >= sizeof(CESERVER_ROOT_INFO))) ? &pOut->RootInfo : NULL,
+			rsInfo);
 
-		// Name="cmd.exe"
-		{
-			LPCWSTR pszName = GetRootProcessName();
-			LPWSTR pszReady = NULL; szTemp[0] = 0;
-			if (pszName && *pszName)
-			{
-				pszReady = szTemp;
-				_ASSERTE(wcslen(pszName)*4 < countof(szTemp));
-				INT_PTR cchMax = countof(szTemp) - 1;
-				while (*pszName && ((pszReady - szTemp) < cchMax))
-				{
-					EscapeChar(true, pszName, pszReady);
-				}
-				*pszReady = 0;
-			}
-			lstrmerge(&rsInfo.ms_Val, L"\tName=\"", *szTemp ? szTemp : L"<Unknown>", L"\"\n");
-		}
-
-		if (pOut && (pOut->DataSize() >= sizeof(CESERVER_ROOT_INFO)) && pOut->RootInfo.nPID)
-		{
-			lstrmerge(&rsInfo.ms_Val, L"\tRunning=\"", pOut->RootInfo.bRunning ? L"true" : L"false", L"\"\n");
-			lstrmerge(&rsInfo.ms_Val, L"\tPID=\"", _itow(pOut->RootInfo.nPID, szTemp, 10), L"\"\n");
-			lstrmerge(&rsInfo.ms_Val, L"\tExitCode=\"", _itow(pOut->RootInfo.nExitCode, szTemp, 10), L"\"\n");
-			lstrmerge(&rsInfo.ms_Val, L"\tUpTime=\"", _itow(pOut->RootInfo.nUpTime, szTemp, 10), L"\"\n"); // Final, no trailing ","
-		}
-		else
-		{
-			//lstrmerge(&rsInfo.ms_Val, L"\t\"Status\"=\"Unknown\"\n"); // Final, no trailing ","
-		}
 		ExecuteFreeResult(pOut);
 		ExecuteFreeResult(pIn);
 
-		lstrmerge(&rsInfo.ms_Val, L"/>\n");
 		pszVal = rsInfo.ms_Val;
 	}
 	else if (lstrcmpi(asWhat, L"AnsiLog") == 0)
@@ -7818,6 +7851,70 @@ LPCWSTR CRealConsole::GetConsoleInfo(LPCWSTR asWhat, CEStr& rsInfo)
 		pszVal = rsInfo.Set(szTemp);
 
 	return pszVal;
+}
+
+// Used in StatusBar
+LPCWSTR CRealConsole::GetActiveProcessInfo(CEStr& rsInfo)
+{
+	if (!this)
+		return NULL;
+
+	DWORD nPID = 0;
+	ConProcess Process = {};
+
+	if ((nPID = GetActivePID(&Process)) == 0)
+	{
+		if (m_RootInfo.nPID)
+		{
+			wchar_t szExitInfo[80];
+			if (m_RootInfo.bRunning)
+				_wsprintf(szExitInfo, SKIPCOUNT(szExitInfo) L":%u", m_RootInfo.nPID);
+			else
+				_wsprintf(szExitInfo, SKIPCOUNT(szExitInfo) L":%u %s %i",
+					m_RootInfo.nPID,
+					CLngRc::getRsrc(lng_ExitCode/*"exit code"*/),
+					(int)m_RootInfo.nExitCode);
+			rsInfo = lstrmerge(ms_RootProcessName, szExitInfo);
+		}
+		else
+		{
+			rsInfo = L"Unknown state";
+		}
+	}
+	else
+	{
+		TODO("Show full running process tree?");
+
+		wchar_t szNameTrim[64];
+		lstrcpyn(szNameTrim, *Process.Name ? Process.Name : L"???", countof(szNameTrim));
+
+		DWORD nInteractivePID = GetInteractivePID();
+		DWORD nFarPluginPID = GetFarPID(true);
+		LPCWSTR pszInteractive = (nPID == nFarPluginPID) ? L"#"
+			: (nPID == nInteractivePID) ? L"*"
+			: L"";
+
+		bool isAdmin = isAdministrator();
+		LPCWSTR pszAdmin = isAdmin ? L"*" : L"";
+
+		size_t cchTextMax = 255;
+		wchar_t* pszText = rsInfo.GetBuffer(cchTextMax);
+
+		// Issue 1708: show active process bitness and UAC state
+		if (IsWindows64())
+		{
+			wchar_t szBits[8] = L"";
+			if (Process.Bits > 0) _wsprintf(szBits, SKIPLEN(countof(szBits)) L"%i", Process.Bits);
+
+			_wsprintf(pszText, SKIPLEN(cchTextMax) _T("%s%s[%s%s]:%u"), szNameTrim, pszInteractive, pszAdmin, szBits, nPID);
+		}
+		else
+		{
+			_wsprintf(pszText, SKIPLEN(cchTextMax) _T("%s%s%s:%u"), szNameTrim, pszInteractive, pszAdmin, nPID);
+		}
+	}
+
+	return rsInfo.c_str(L"Unknown state");
 }
 
 // Вернуть PID "условно активного" процесса в консоли
@@ -9292,11 +9389,11 @@ void CRealConsole::OnFocus(BOOL abFocused)
 		#ifdef _DEBUG
 		if (abFocused)
 		{
-			DEBUGSTRINPUT(L"--Gets focus\n")
+			DEBUGSTRFOCUS(L"--Gets focus");
 		}
 		else
 		{
-			DEBUGSTRINPUT(L"--Loses focus\n")
+			DEBUGSTRFOCUS(L"--Loses focus");
 		}
 		#endif
 
@@ -9638,7 +9735,7 @@ BOOL CRealConsole::RecreateProcess(RConStartArgs *args)
 			wchar_t* pszTaskCommands = mp_ConEmu->LoadConsoleBatch(args->pszSpecialCmd, args);
 			if (!pszTaskCommands || !*pszTaskCommands)
 			{
-				CEStr lsMsg(lstrmerge(L"Can't load task contents!\n", args->pszSpecialCmd));
+				CEStr lsMsg(L"Can't load task contents!\n", args->pszSpecialCmd);
 				MsgBox(lsMsg, MB_ICONSTOP);
 				return false;
 			}
@@ -9646,7 +9743,7 @@ BOOL CRealConsole::RecreateProcess(RConStartArgs *args)
 			wchar_t* pszBreak = (wchar_t*)wcspbrk(pszTaskCommands, L"\r\n");
 			if (pszBreak)
 			{
-				CEStr lsMsg(lstrmerge(L"Task ", args->pszSpecialCmd, L" contains more than a command.\n" L"Only first will be executed."));
+				CEStr lsMsg(L"Task ", args->pszSpecialCmd, L" contains more than a command.\n" L"Only first will be executed.");
 				int iBtn = MsgBox(lsMsg, MB_ICONEXCLAMATION|MB_OKCANCEL);
 				if (iBtn != IDOK)
 					return false;
@@ -12151,6 +12248,10 @@ void CRealConsole::Paste(CEPasteMode PasteMode /*= pm_Standard*/, LPCWSTR asText
 	// Не будем пользоваться встроенным WinConsole функционалом. Мало контроля.
 	PostConsoleMessage(hConWnd, WM_COMMAND, SC_PASTE_SECRET, 0);
 #else
+
+	// Reset selection if it was present
+	if (isSelectionPresent())
+		mp_ABuf->DoSelectionFinalize(false);
 
 	wchar_t* pszBuf = NULL;
 
@@ -14702,6 +14803,26 @@ CEPauseCmd CRealConsole::Pause(CEPauseCmd cmd)
 	return result;
 }
 
+bool CRealConsole::QueryPromptStart(COORD *cr)
+{
+	if (!this || !hConWnd || !m_AppMap.IsValid())
+		return false;
+
+	#ifdef _DEBUG
+	DWORD nPID = GetActivePID();
+	#endif
+
+	// TODO: It would be nice to check m_AppMap.Ptr()->nPreReadRowID?
+
+	CONSOLE_SCREEN_BUFFER_INFO csbiPreRead = m_AppMap.Ptr()->csbiPreRead;
+	if (!csbiPreRead.dwCursorPosition.X && !csbiPreRead.dwCursorPosition.X)
+		return false;
+
+	if (cr)
+		*cr = csbiPreRead.dwCursorPosition;
+	return true;
+}
+
 void CRealConsole::GetConsoleCursorInfo(CONSOLE_CURSOR_INFO *ci, COORD *cr)
 {
 	if (!this) return;
@@ -14825,7 +14946,7 @@ wrap:
 void CRealConsole::GetPanelDirs(CEStr& szActiveDir, CEStr& szPassive)
 {
 	szActiveDir.Set(ms_CurWorkDir);
-	szPassive.Set(isFar() ? ms_CurPassiveDir : L"");
+	szPassive.Set(isFar() ? ms_CurPassiveDir.c_str(L"") : L"");
 }
 
 void CRealConsole::StoreCurWorkDir(CESERVER_REQ_STORECURDIR* pNewCurDir)
@@ -15627,14 +15748,14 @@ void CRealConsole::PostMacro(LPCWSTR asMacro, BOOL abAsync /*= FALSE*/)
 		// This is GuiMacro, but not a Far Manager macros
 		if (asMacro[1])
 		{
-			CEStr pszGui = lstrdup(asMacro+1);
+			CEStr pszGui(asMacro+1), szRc;
 			if (m_UseLogs)
 			{
-				CEStr lsLog(lstrmerge(L"CRealConsole::PostMacro: ", asMacro));
+				CEStr lsLog(L"CRealConsole::PostMacro: ", asMacro);
 				LogString(lsLog);
 			}
-			CEStr pszRc = ConEmuMacro::ExecuteMacro(pszGui.ms_Val, this);
-			LogString(pszRc ? pszRc : L"<NULL>");
+			szRc = ConEmuMacro::ExecuteMacro(pszGui.ms_Val, this);
+			LogString(szRc.c_str(L"<NULL>"));
 			TODO("Show result in the status line?");
 		}
 		return;
@@ -15676,7 +15797,7 @@ void CRealConsole::PostMacro(LPCWSTR asMacro, BOOL abAsync /*= FALSE*/)
 	if (m_UseLogs)
 	{
 		wchar_t szPID[32]; _wsprintf(szPID, SKIPCOUNT(szPID) L"(FarPID=%u): ", nPID);
-		CEStr lsLog(lstrmerge(L"CRealConsole::PostMacro", szPID, asMacro));
+		CEStr lsLog(L"CRealConsole::PostMacro", szPID, asMacro);
 		LogString(lsLog);
 	}
 
@@ -15949,7 +16070,7 @@ void CRealConsole::Unfasten()
 	LPCWSTR pszConEmuStartArgs = gpConEmu->MakeConEmuStartArgs(lsTempBuf);
 	wchar_t szMacro[64];
 	_wsprintf(szMacro, SKIPCOUNT(szMacro) L"-GuiMacro \"Attach %u\"", nAttachPID);
-	CEStr lsRunArgs = lstrmerge(L"\"", gpConEmu->ms_ConEmuExe, L"\" -Detached ", pszConEmuStartArgs, szMacro);
+	CEStr lsRunArgs(L"\"", gpConEmu->ms_ConEmuExe, L"\" -Detached ", pszConEmuStartArgs, szMacro);
 
 	STARTUPINFO si = {sizeof(si)};
 	PROCESS_INFORMATION pi = {};
@@ -16141,6 +16262,22 @@ void CRealConsole::GetConsoleModes(WORD& nConInMode, WORD& nConOutMode, TermEmul
 	}
 }
 
+void CRealConsole::ResetHighlightHyperlinks()
+{
+	if (!this)
+		return;
+	// Reset flags in buffers
+	if (mp_RBuf)
+		mp_RBuf->ResetHighlightHyperlinks();
+	if (mp_EBuf)
+		mp_EBuf->ResetHighlightHyperlinks();
+	if (mp_SBuf)
+		mp_SBuf->ResetHighlightHyperlinks();
+	// Following is superfluous, JIC if we create new buffers in future
+	if (mp_ABuf)
+		mp_ABuf->ResetHighlightHyperlinks();
+}
+
 ExpandTextRangeType CRealConsole::GetLastTextRangeType()
 {
 	return mp_ABuf->GetLastTextRangeType();
@@ -16222,7 +16359,10 @@ void CRealConsole::AutoCopyTimer()
 	if (gpSet->isCTSAutoCopy && isSelectionPresent())
 	{
 		DEBUGSTRTEXTSEL(L"CRealConsole::AutoCopyTimer() -> DoSelectionFinalize");
-		mp_ABuf->DoSelectionFinalize(true);
+		if (gpSet->isCTSResetOnRelease)
+			mp_ABuf->DoSelectionFinalize(true);
+		else
+			DoSelectionCopy();
 	}
 	else
 	{

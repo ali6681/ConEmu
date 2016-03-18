@@ -54,6 +54,13 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 class CMatch;
 
+enum IntelligentSelectionState
+{
+	IS_None = 0,
+	IS_LBtnDown,
+	IS_LBtnReleased,
+};
+
 class CRealBuffer
 {
 public:
@@ -120,6 +127,7 @@ public:
 	COORD BufferToScreen(COORD crMouse, bool bFixup = true, bool bVertOnly = false);
 	bool ProcessFarHyperlink(UINT messg, COORD crFrom, bool bUpdateScreen);
 	bool ProcessFarHyperlink(bool bUpdateScreen);
+	void ResetHighlightHyperlinks();
 	ExpandTextRangeType GetLastTextRangeType();
 
 	void ShowKeyBarHint(WORD nID);
@@ -140,13 +148,16 @@ private:
 public:
 	void OnTimerCheckSelection();
 	void MarkFindText(int nDirection, LPCWSTR asText, bool abCaseSensitive, bool abWholeWords); // <<== CRealConsole::DoFindText
-	void StartSelection(BOOL abTextMode, SHORT anX=-1, SHORT anY=-1, BOOL abByMouse=FALSE, UINT anFromMsg=0, COORD *pcrTo=NULL);
+	void StartSelection(BOOL abTextMode, SHORT anX=-1, SHORT anY=-1, BOOL abByMouse=FALSE, UINT anFromMsg=0, COORD *pcrTo=NULL, DWORD anAnchorFlag = 0);
+	void ChangeSelectionByKey(UINT vkKey, bool bCtrl, bool bShift);
 	void ExpandSelection(SHORT anX, SHORT anY, bool bWasSelection);
+	UINT CorrectSelectionAnchor();
 	bool DoSelectionFinalize(bool abCopy, CECopyMode CopyMode = cm_CopySel, WPARAM wParam = 0, HGLOBAL* phUnicode = NULL);
 	void DoCopyPaste(bool abCopy, bool abPaste);
 	void DoSelectionStop();
 	bool DoSelectionCopy(CECopyMode CopyMode = cm_CopySel, BYTE nFormat = CTSFormatDefault, LPCWSTR pszDstFile = NULL, HGLOBAL* phUnicode = NULL);
 	void UpdateSelection();
+	void UpdateHyperlink();
 	bool isConSelectMode();
 	bool isStreamSelection();
 
@@ -163,6 +174,9 @@ public:
 	BOOL GetConsoleLine(int nLine, wchar_t** pChar, /*CharAttr** pAttr,*/ int* pLen, MSectionLock* pcsData = NULL);
 	void GetConsoleData(wchar_t* pChar, CharAttr* pAttr, int nWidth, int nHeight, ConEmuTextRange& etr);
 
+	void ResetConData();
+	bool isConDataValid();
+
 	DWORD_PTR GetKeybLayout();
 	void  SetKeybLayout(DWORD_PTR anNewKeyboardLayout);
 
@@ -171,6 +185,7 @@ public:
 	bool isSelectionAllowed();
 	bool isSelectionPresent();
 	bool isMouseSelectionPresent();
+	bool isMouseInsideSelection(int x, int y);
 	bool GetConsoleSelectionInfo(CONSOLE_SELECTION_INFO *sel);
 	int  GetSelectionCellsCount();
 
@@ -211,7 +226,7 @@ private:
 	void PrepareTransparent(wchar_t* pChar, CharAttr* pAttr, int nWidth, int nHeight);
 
 	ExpandTextRangeType ExpandTextRange(COORD& crFrom/*[In/Out]*/, COORD& crTo/*[Out]*/, ExpandTextRangeType etr, CEStr* psText = NULL);
-	void StoreLastTextRange(ExpandTextRangeType etr);
+	bool StoreLastTextRange(ExpandTextRangeType etr);
 
 	short CheckProgressInConsole(const wchar_t* pszCurLine);
 
@@ -245,7 +260,13 @@ protected:
 	{
 		CONSOLE_SELECTION_INFO m_sel;
 		DWORD m_SelClickTick, m_SelDblClickTick, m_SelLastScrollCheck;
-		BOOL mb_IntelliStored; POINT mpt_IntelliLClick; // Сохранить позицию клика для Intelligent selection
+		struct {
+			IntelligentSelectionState State; // former mb_IntelliStored
+			DWORD ClickTick; // To be sure if we need DblClick selection
+			POINT LClickPt; // Save LBtnDown position for Intelligent selection
+		} ISel; // Intelligent selection
+		UINT mn_SkipNextMouseEvent; // Avoid posting LBtnUp in console, if we processed LBtnDn internally
+		LONG mn_UpdateSelectionCalled;
 		CONSOLE_CURSOR_INFO m_ci;
 		DWORD m_dwConsoleCP, m_dwConsoleOutputCP;
 		WORD m_dwConsoleInMode, m_dwConsoleOutMode;
@@ -260,6 +281,7 @@ protected:
 		BOOL bInGetConsoleData;
 		int nCreatedBufWidth, nCreatedBufHeight; // Informational
 		size_t nConBufCells; // Max buffers size (cells!)
+		bool mb_ConDataValid;
 		wchar_t *pConChar;
 		WORD  *pConAttr;
 		CHAR_INFO *pDataCmp;
@@ -283,6 +305,7 @@ protected:
 		int nRClickVK; // VK_F1..F12
 		// Последний etr... (подсветка URL's и строк-ошибок-компиляторов)
 		ConEmuTextRange etr; // etrLast, mcr_FileLineStart, mcr_FileLineEnd
+		bool etrWasChanged;
 	} con;
 	bool SetTopLeft(int ay = -1, int ax = -1, bool abServerCall = false);
 

@@ -825,7 +825,7 @@
 #define rbScrollbarShow                 2488
 #define rbScrollbarAuto                 2489
 #define stHideCaptionAlwaysFrame        2490
-#define cbTaskbarShield                 2491
+#define cbTaskbarOverlay                2491
 #define vkPasteCygwin                   2492
 #define cbCmdTasksActive                2493
 #define vkTabMenu2                      2494
@@ -858,7 +858,6 @@
 #define rbDefaultTerminalConfNever      2521
 #define vkDeleteLeftWord                2522
 #define cbCTSDeleteLeftWord             2526
-#define lbCTSFindIdx                    2529
 #define rCursorH                        2530
 #define rCursorV                        2531
 #define rCursorB                        2532
@@ -1329,15 +1328,18 @@
 #define stKeySelectMod                  3025
 #define vkJumpActiveMonitor             3026
 #define vkResetTerminal                 3027
+#define vkAltNumpad                     3028
+#define cbCTSResetOnRelease             3029
+#define cbCTSEraseBeforeReset           3030
 #define IDC_STATIC                      -1
 
 // Next default values for new objects
 // 
 #ifdef APSTUDIO_INVOKED
 #ifndef APSTUDIO_READONLY_SYMBOLS
-#define _APS_NEXT_RESOURCE_VALUE        230
+#define _APS_NEXT_RESOURCE_VALUE        231
 #define _APS_NEXT_COMMAND_VALUE         40010
-#define _APS_NEXT_CONTROL_VALUE         3028
+#define _APS_NEXT_CONTROL_VALUE         3031
 #define _APS_NEXT_SYMED_VALUE           130
 #endif
 #endif

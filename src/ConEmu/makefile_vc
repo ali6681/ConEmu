@@ -78,19 +78,24 @@ $(INTDIR)\LoadImg.obj \
 $(INTDIR)\Macro.obj \
 $(INTDIR)\MAssert.obj \
 $(INTDIR)\Match.obj \
+$(INTDIR)\MBSTR.obj \
 $(INTDIR)\md5.obj \
 $(INTDIR)\Memory.obj \
 $(INTDIR)\Menu.obj \
 $(INTDIR)\MEvent.obj \
 $(INTDIR)\MFileLog.obj \
 $(INTDIR)\MGlobal.obj \
+$(INTDIR)\MGuiMacro.obj \
 $(INTDIR)\MJsonReader.obj \
+$(INTDIR)\MModule.obj \
 $(INTDIR)\Monitors.obj \
-$(INTDIR)\MSectionSimple.obj \
+$(INTDIR)\MRect.obj \
 $(INTDIR)\MSection.obj \
+$(INTDIR)\MSectionSimple.obj \
 $(INTDIR)\MSecurity.obj \
 $(INTDIR)\MSetter.obj \
 $(INTDIR)\MStrDup.obj \
+$(INTDIR)\MStrEsc.obj \
 $(INTDIR)\MStrSafe.obj \
 $(INTDIR)\MTimer.obj \
 $(INTDIR)\MToolTip.obj \
@@ -145,6 +150,7 @@ $(INTDIR)\WFiles.obj \
 $(INTDIR)\WinObjBase.obj \
 $(INTDIR)\WObjects.obj \
 $(INTDIR)\WRegistry.obj \
+$(INTDIR)\WSession.obj \
 $(INTDIR)\WThreads.obj \
 $(INTDIR)\WUser.obj
 
@@ -348,6 +354,8 @@ $(INTDIR)\FrameHolder.obj: FrameHolder.cpp FrameHolder.h
 
 $(INTDIR)\GestureEngine.obj: GestureEngine.cpp GestureEngine.h
 
+$(INTDIR)\MGuiMacro.obj: ../common/MGuiMacro.cpp ../common/MGuiMacro.h
+
 $(INTDIR)\GuiServer.obj: GuiServer.cpp GuiServer.h ConEmu.h RealConsole.h VirtualConsole.h
 
 $(INTDIR)\HkFunc.obj: ../common/HkFunc.cpp ../common/HkFunc.h
@@ -380,6 +388,8 @@ $(INTDIR)\MAssert.obj: ../common/MAssert.cpp
 
 $(INTDIR)\Match.obj: Match.cpp Match.h
 
+$(INTDIR)\MBSTR.obj: ../common/MBSTR.cpp ../common/MBSTR.h
+
 $(INTDIR)\md5.obj: ../common/md5.cpp ../common/md5.h
 
 $(INTDIR)\Memory.obj: ../common/Memory.cpp
@@ -394,7 +404,11 @@ $(INTDIR)\MGlobal.obj: ../common/MGlobal.cpp ../common/MGlobal.h
 
 $(INTDIR)\MJsonReader.obj: ../common/MJsonReader.cpp ../common/MJsonReader.h
 
+$(INTDIR)\MModule.obj: ../common/MModule.cpp ../common/MModule.h
+
 $(INTDIR)\Monitors.obj: ../common/Monitors.cpp
+
+$(INTDIR)\MRect.obj: ../common/MRect.cpp ../common/MRect.h
 
 $(INTDIR)\MSectionSimple.obj: ../common/MSectionSimple.cpp ../common/MSectionSimple.h ../common/MSection.h
 
@@ -405,6 +419,8 @@ $(INTDIR)\MSecurity.obj: ../common/MSecurity.cpp
 $(INTDIR)\MSetter.obj: ../common/MSetter.cpp ../common/MSetter.h
 
 $(INTDIR)\MStrDup.obj: ../common/MStrDup.cpp ../common/MStrDup.h
+
+$(INTDIR)\MStrEsc.obj: ../common/MStrEsc.cpp ../common/MStrEsc.h
 
 $(INTDIR)\MStrSafe.obj: ../common/MStrSafe.cpp
 
@@ -513,6 +529,8 @@ $(INTDIR)\WinObjBase.obj: WinObjBase.cpp WinObjBase.h
 $(INTDIR)\WObjects.obj: ../common/WObjects.cpp
 
 $(INTDIR)\WRegistry.obj: ../common/WRegistry.cpp
+
+$(INTDIR)\WSession.obj: ../common/WSession.cpp ../common/WSession.h
 
 $(INTDIR)\WThreads.obj: ../common/WThreads.cpp ../common/WThreads.h
 

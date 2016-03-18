@@ -666,7 +666,7 @@ void Settings::InitSettings()
 	isAnsiLog = false;
 	pszAnsiLog = lstrdup(L"%ConEmuDir%\\Logs\\");
 	isProcessNewConArg = true;
-	isProcessCmdStart = true;
+	isProcessCmdStart = false; // gh#420
 	isProcessCtrlZ = false; // gh#465, golang/go#6303
 	isSuppressBells = true;
 	isConsoleExceptionHandler = false; // по умолчанию - false
@@ -695,9 +695,11 @@ void Settings::InitSettings()
 	isCTSIntelligent = true;
 	pszCTSIntelligentExceptions = LineDelimited2MSZ(L"far|vim");
 	isCTSAutoCopy = true;
+	isCTSResetOnRelease = false;
 	isCTSIBeam = true;
 	isCTSEndOnTyping = false;
 	isCTSEndOnKeyPress = false;
+	isCTSEraseBeforeReset = true;
 	isCTSFreezeBeforeSelect = false;
 	isCTSSelectBlock = true; //isCTSVkBlock = VK_LMENU; // по умолчанию - блок выделяется c LAlt
 	isCTSSelectText = true; //isCTSVkText = VK_LSHIFT; // а текст - при нажатом LShift
@@ -776,7 +778,7 @@ void Settings::InitSettings()
 	nTabBarDblClickAction = TABBAR_DEFAULT_CLICK_ACTION; nTabBtnDblClickAction = TABBTN_DEFAULT_CLICK_ACTION;
 	ilDragHeight = 10;
 	m_isTabsOnTaskBar = 2;
-	isTaskbarShield = true;
+	isTaskbarOverlay = true;
 	isTaskbarProgress = true;
 
 	isTabsInCaption = false; //cbTabsInCaption
@@ -2232,7 +2234,7 @@ void Settings::LoadSettings(bool& rbNeedCreateVanilla, const SettingsStorage* ap
 		return;
 	}
 	// Log xml/reg + file + config
-	CEStr lsDesc = GetStoragePlaceDescr(apStorage, L"Settings::LoadSettings");
+	CEStr lsDesc(GetStoragePlaceDescr(apStorage, L"Settings::LoadSettings"));
 	gpConEmu->LogString(lsDesc.ms_Val);
 
 	// Settings service
@@ -2617,9 +2619,11 @@ void Settings::LoadSettings(bool& rbNeedCreateVanilla, const SettingsStorage* ap
 		}
 
 		reg->Load(L"CTS.AutoCopy", isCTSAutoCopy);
+		reg->Load(L"CTS.ResetOnRelease", isCTSResetOnRelease);
 		reg->Load(L"CTS.IBeam", isCTSIBeam);
 		reg->Load(L"CTS.EndOnTyping", isCTSEndOnTyping); MinMax(isCTSEndOnTyping, 2);
 		reg->Load(L"CTS.EndOnKeyPress", isCTSEndOnKeyPress);
+		reg->Load(L"CTS.EraseBeforeReset", isCTSEraseBeforeReset);
 		reg->Load(L"CTS.Freeze", isCTSFreezeBeforeSelect);
 		reg->Load(L"CTS.SelectBlock", isCTSSelectBlock);
 		//reg->Load(L"CTS.VkBlock", isCTSVkBlock);
@@ -2805,7 +2809,7 @@ void Settings::LoadSettings(bool& rbNeedCreateVanilla, const SettingsStorage* ap
 		reg->Load(L"TabDblClick", nTabBarDblClickAction); MinMax(nTabBarDblClickAction, 3);
 		reg->Load(L"TabBtnDblClick", nTabBtnDblClickAction); MinMax(nTabBtnDblClickAction, 5);
 		reg->Load(L"TabsOnTaskBar", m_isTabsOnTaskBar);
-		reg->Load(L"TaskBarOverlay", isTaskbarShield);
+		reg->Load(L"TaskBarOverlay", isTaskbarOverlay);
 		reg->Load(L"TaskbarProgress", isTaskbarProgress);
 
 		if (!reg->Load(L"TabCloseMacro", &sTabCloseMacro) || (sTabCloseMacro && !*sTabCloseMacro)) { SafeFree(sTabCloseMacro); }
@@ -3661,9 +3665,11 @@ BOOL Settings::SaveSettings(BOOL abSilent /*= FALSE*/, const SettingsStorage* ap
 		SafeFree(pszApps);
 		}
 		reg->Save(L"CTS.AutoCopy", isCTSAutoCopy);
+		reg->Save(L"CTS.ResetOnRelease", isCTSResetOnRelease);
 		reg->Save(L"CTS.IBeam", isCTSIBeam);
 		reg->Save(L"CTS.EndOnTyping", isCTSEndOnTyping);
 		reg->Save(L"CTS.EndOnKeyPress", isCTSEndOnKeyPress);
+		reg->Save(L"CTS.EraseBeforeReset", isCTSEraseBeforeReset);
 		reg->Save(L"CTS.Freeze", isCTSFreezeBeforeSelect);
 		reg->Save(L"CTS.SelectBlock", isCTSSelectBlock);
 		//reg->Save(L"CTS.VkBlock", isCTSVkBlock);
@@ -3753,7 +3759,7 @@ BOOL Settings::SaveSettings(BOOL abSilent /*= FALSE*/, const SettingsStorage* ap
 		reg->Save(L"TabDblClick", nTabBarDblClickAction);
 		reg->Save(L"TabBtnDblClick", nTabBtnDblClickAction);
 		reg->Save(L"TabsOnTaskBar", m_isTabsOnTaskBar);
-		reg->Save(L"TaskBarOverlay", isTaskbarShield);
+		reg->Save(L"TaskBarOverlay", isTaskbarOverlay);
 		reg->Save(L"TaskbarProgress", isTaskbarProgress);
 		reg->Save(L"TabCloseMacro", sTabCloseMacro);
 		reg->Save(L"TabFontFace", sTabFontFace);
@@ -5273,7 +5279,7 @@ int Settings::CmdTaskSet(int anIndex, LPCWSTR asName, LPCWSTR asGuiArgs, LPCWSTR
 		if (aFlags & CETF_MAKE_UNIQUE)
 		{
 			// If task with same name exists - append suffix " (1)" ... " (999)"
-			CEStr lsNaked = lstrdup((asName[0] == TaskBracketLeft) ? (asName+1) : asName);
+			CEStr lsNaked((asName[0] == TaskBracketLeft) ? (asName+1) : asName);
 			INT_PTR iLen = wcslen(lsNaked);
 			if ((iLen > 0) && (lsNaked.ms_Val[iLen-1] == TaskBracketRight))
 				lsNaked.ms_Val[iLen-1] = 0;
@@ -5521,12 +5527,12 @@ wchar_t* Settings::MultiLine2MSZ(const wchar_t* apszLines, DWORD* pcbSize/*in by
 
 bool Settings::LoadMSZ(SettingsBase* reg, LPCWSTR asName, wchar_t*& rsLines, LPCWSTR asDelim /*= L"|"*/, bool bFinalToo /*= false*/)
 {
-	SafeFree(rsLines);
 	wchar_t* pszMsz = NULL; // MSZZ
 
 	bool bRc = reg->Load(asName, &pszMsz);
 	if (bRc && pszMsz)
 	{
+		SafeFree(rsLines);
 		rsLines = MSZ2LineDelimited(pszMsz, asDelim, bFinalToo);
 		free(pszMsz);
 	}

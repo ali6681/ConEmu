@@ -429,8 +429,8 @@ bool CSetDlgButtons::ProcessButtonClick(HWND hDlg, WORD CB, BYTE uCheck)
 		case cbTabLazy:
 			OnBtn_TabLazy(hDlg, CB, uCheck);
 			break;
-		case cbTaskbarShield:
-			OnBtn_TaskbarShield(hDlg, CB, uCheck);
+		case cbTaskbarOverlay:
+			OnBtn_TaskbarOverlay(hDlg, CB, uCheck);
 			break;
 		case cbTaskbarProgress:
 			OnBtn_TaskbarProgress(hDlg, CB, uCheck);
@@ -740,6 +740,9 @@ bool CSetDlgButtons::ProcessButtonClick(HWND hDlg, WORD CB, BYTE uCheck)
 		case cbCTSAutoCopy:
 			OnBtn_CTSAutoCopy(hDlg, CB, uCheck);
 			break;
+		case cbCTSResetOnRelease:
+			OnBtn_CTSResetOnRelease(hDlg, CB, uCheck);
+			break;
 		case cbCTSIBeam:
 			OnBtn_CTSIBeam(hDlg, CB, uCheck);
 			break;
@@ -749,6 +752,9 @@ bool CSetDlgButtons::ProcessButtonClick(HWND hDlg, WORD CB, BYTE uCheck)
 			break;
 		case cbCTSEndOnKeyPress:
 			OnBtn_CTSEndOnKeyPress(hDlg, CB, uCheck);
+			break;
+		case cbCTSEraseBeforeReset:
+			OnBtn_CTSEraseBeforeReset(hDlg, CB, uCheck);
 			break;
 		case cbCTSBlockSelection:
 			OnBtn_CTSBlockSelection(hDlg, CB, uCheck);
@@ -2626,15 +2632,15 @@ void CSetDlgButtons::OnBtn_TabLazy(HWND hDlg, WORD CB, BYTE uCheck)
 } // cbTabLazy
 
 
-// cbTaskbarShield
-void CSetDlgButtons::OnBtn_TaskbarShield(HWND hDlg, WORD CB, BYTE uCheck)
+// cbTaskbarOverlay
+void CSetDlgButtons::OnBtn_TaskbarOverlay(HWND hDlg, WORD CB, BYTE uCheck)
 {
-	_ASSERTE(CB==cbTaskbarShield);
+	_ASSERTE(CB==cbTaskbarOverlay);
 
-	gpSet->isTaskbarShield = uCheck;
+	gpSet->isTaskbarOverlay = uCheck;
 	gpConEmu->Taskbar_UpdateOverlay();
 
-} // cbTaskbarShield
+} // cbTaskbarOverlay
 
 
 // cbTaskbarProgress
@@ -3871,9 +3877,25 @@ void CSetDlgButtons::OnBtn_CTSAutoCopy(HWND hDlg, WORD CB, BYTE uCheck)
 {
 	_ASSERTE(CB==cbCTSAutoCopy);
 
-	gpSet->isCTSAutoCopy = uCheck;
+	gpSet->isCTSAutoCopy = (uCheck != BST_UNCHECKED);
+
+	if (hDlg)
+	{
+		CSettings::checkDlgButton(hDlg, cbCTSResetOnRelease, (gpSet->isCTSResetOnRelease && gpSet->isCTSAutoCopy));
+		CSettings::EnableDlgItem(hDlg, cbCTSResetOnRelease, gpSet->isCTSAutoCopy);
+	}
 
 } // cbCTSAutoCopy
+
+
+// cbCTSResetOnRelease
+void CSetDlgButtons::OnBtn_CTSResetOnRelease(HWND hDlg, WORD CB, BYTE uCheck)
+{
+	_ASSERTE(CB==cbCTSResetOnRelease);
+
+	gpSet->isCTSResetOnRelease = (uCheck != BST_UNCHECKED);
+
+} // cbCTSResetOnRelease
 
 
 // cbCTSIBeam
@@ -3915,8 +3937,9 @@ void CSetDlgButtons::OnBtn_CTSEndCopyAuto(HWND hDlg, WORD CB, BYTE uCheck)
 
 	if (hDlg)
 	{
-		EnableWindow(GetDlgItem(hDlg, cbCTSEndOnKeyPress), gpSet->isCTSEndOnTyping!=0);
-		EnableWindow(GetDlgItem(hDlg, cbCTSEndCopyBefore), gpSet->isCTSEndOnTyping!=0);
+		CSettings::EnableDlgItem(hDlg, cbCTSEndOnKeyPress, gpSet->isCTSEndOnTyping!=0);
+		CSettings::EnableDlgItem(hDlg, cbCTSEndCopyBefore, gpSet->isCTSEndOnTyping!=0);
+		CSettings::EnableDlgItem(hDlg, cbCTSEraseBeforeReset, gpSet->isCTSEndOnTyping!=0);
 		//checkDlgButton(hDlg, cbCTSEndOnKeyPress, gpSet->isCTSEndOnKeyPress); -- здесь не меняется -- "End on any key"
 	}
 } // cbCTSEndOnTyping || cbCTSEndCopyBefore
@@ -3927,9 +3950,19 @@ void CSetDlgButtons::OnBtn_CTSEndOnKeyPress(HWND hDlg, WORD CB, BYTE uCheck)
 {
 	_ASSERTE(CB==cbCTSEndOnKeyPress);
 
-	gpSet->isCTSEndOnKeyPress = uCheck;
+	gpSet->isCTSEndOnKeyPress = (uCheck != BST_UNCHECKED);
 
 } // cbCTSEndOnKeyPress
+
+
+// cbCTSEraseBeforeReset
+void CSetDlgButtons::OnBtn_CTSEraseBeforeReset(HWND hDlg, WORD CB, BYTE uCheck)
+{
+	_ASSERTE(CB==cbCTSEraseBeforeReset);
+
+	gpSet->isCTSEraseBeforeReset = (uCheck != BST_UNCHECKED);
+
+} // cbCTSEraseBeforeReset
 
 
 // cbCTSBlockSelection

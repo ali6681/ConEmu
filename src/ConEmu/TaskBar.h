@@ -1,6 +1,6 @@
 ﻿
 /*
-Copyright (c) 2011-2015 Maximus5
+Copyright (c) 2011-2016 Maximus5
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -79,6 +79,7 @@ protected:
 	HWND GetProgressHWND();
 public:
 	void Taskbar_GhostReorder();
+	bool isTaskbarSmallIcons();
 public:
 	CTaskBar();
 	virtual ~CTaskBar();

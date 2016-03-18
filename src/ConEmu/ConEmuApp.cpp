@@ -47,7 +47,9 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "../common/DbgHlpGcc.h"
 #endif
 #include "../common/ConEmuCheck.h"
+#include "../common/MBSTR.h"
 #include "../common/MSetter.h"
+#include "../common/MStrEsc.h"
 #include "../common/WFiles.h"
 #include "AboutDlg.h"
 #include "Options.h"
@@ -186,6 +188,36 @@ wchar_t gsDefConFont[32] = L"Lucida Console"; // DBCS ? L"Liberation Mono" : L"L
 wchar_t gsAltConFont[32] = L"Courier New"; // "Lucida Console" is not installed?
 // Use this (default) in ConEmu interface, where allowed (tabs, status, panel views, ...)
 wchar_t gsDefMUIFont[32] = L"Tahoma";         // WindowsVista ? L"Segoe UI" : L"Tahoma"
+
+LPCWSTR GetMouseMsgName(UINT msg)
+{
+	LPCWSTR pszName;
+	switch (msg)
+	{
+	case WM_MOUSEMOVE: pszName = L"WM_MOUSEMOVE"; break;
+	case WM_LBUTTONDOWN: pszName = L"WM_LBUTTONDOWN"; break;
+	case WM_LBUTTONUP: pszName = L"WM_LBUTTONUP"; break;
+	case WM_LBUTTONDBLCLK: pszName = L"WM_LBUTTONDBLCLK"; break;
+	case WM_RBUTTONDOWN: pszName = L"WM_RBUTTONDOWN"; break;
+	case WM_RBUTTONUP: pszName = L"WM_RBUTTONUP"; break;
+	case WM_RBUTTONDBLCLK: pszName = L"WM_RBUTTONDBLCLK"; break;
+	case WM_MBUTTONDOWN: pszName = L"WM_MBUTTONDOWN"; break;
+	case WM_MBUTTONUP: pszName = L"WM_MBUTTONUP"; break;
+	case WM_MBUTTONDBLCLK: pszName = L"WM_MBUTTONDBLCLK"; break;
+	case 0x020A: pszName = L"WM_MOUSEWHEEL"; break;
+	case 0x020B: pszName = L"WM_XBUTTONDOWN"; break;
+	case 0x020C: pszName = L"WM_XBUTTONUP"; break;
+	case 0x020D: pszName = L"WM_XBUTTONDBLCLK"; break;
+	case 0x020E: pszName = L"WM_MOUSEHWHEEL"; break;
+	default:
+		{
+			static wchar_t szTmp[32] = L"";
+			_wsprintf(szTmp, SKIPCOUNT(szTmp) L"0x%X(%u)", msg, msg);
+			pszName = szTmp;
+		}
+	}
+	return pszName;
+}
 
 LONG gnMessageNestingLevel = 0;
 
@@ -566,43 +598,6 @@ void   _free(LPVOID ptr) {
 */
 
 
-COORD /*__forceinline*/ MakeCoord(int X,int Y)
-{
-	COORD cr = {(SHORT)X,(SHORT)Y};
-	return cr;
-}
-
-POINT /*__forceinline*/ MakePoint(int X,int Y)
-{
-	POINT pt = {X,Y};
-	return pt;
-}
-
-RECT /*__forceinline*/ MakeRect(int W,int H)
-{
-	RECT rc = {0,0,W,H};
-	return rc;
-}
-
-RECT /*__forceinline*/ MakeRect(int X1, int Y1,int X2,int Y2)
-{
-	RECT rc = {X1,Y1,X2,Y2};
-	return rc;
-}
-
-BOOL /*__forceinline*/ CoordInRect(const COORD& c, const RECT& r)
-{
-	return (c.X >= r.left && c.X <= r.right) && (c.Y >= r.top && c.Y <= r.bottom);
-}
-
-BOOL IntersectSmallRect(RECT& rc1, SMALL_RECT& rc2)
-{
-	RECT frc2 = {rc2.Left, rc2.Top, rc2.Right, rc2.Bottom};
-	RECT tmp;
-	BOOL lb = IntersectRect(&tmp, &rc1, &frc2);
-	return lb;
-}
-
 bool IntFromString(int& rnValue, LPCWSTR asValue, int anBase /*= 10*/, LPCWSTR* rsEnd /*= NULL*/)
 {
 	bool bOk = false;
@@ -729,148 +724,18 @@ size_t MyGetDlgItemText(HWND hDlg, WORD nID, size_t& cchMax, wchar_t*& pszText/*
 	return nLen;
 }
 
-const wchar_t* gsEscaped = L"\\\r\n\t\a\x1B";
-
 // TODO: Optimize: Now pszDst must be (4x len in maximum for "\xFF" form) for bSet==true
 void EscapeChar(bool bSet, LPCWSTR& pszSrc, LPWSTR& pszDst)
 {
-	_ASSERTE(pszSrc && pszDst);
-
-	LPCWSTR  pszCtrl = L"rntae\\\"";
-
 	if (bSet)
 	{
 		// Set escapes: wchar(13) --> "\\r"
-
-		_ASSERTE(pszSrc != pszDst);
-
-		wchar_t wc = *pszSrc;
-		switch (wc)
-		{
-			case L'"': // 34
-				*(pszDst++) = L'\\';
-				*(pszDst++) = L'"';
-				pszSrc++;
-				break;
-			case L'\\': // 92
-				*(pszDst++) = L'\\';
-				pszSrc++;
-				if (!*pszSrc || !wcschr(pszCtrl, *pszSrc))
-					*(pszDst++) = L'\\';
-				break;
-			case L'\r': // 13
-				*(pszDst++) = L'\\';
-				*(pszDst++) = L'r';
-				pszSrc++;
-				break;
-			case L'\n': // 10
-				*(pszDst++) = L'\\';
-				*(pszDst++) = L'n';
-				pszSrc++;
-				break;
-			case L'\t': // 9
-				*(pszDst++) = L'\\';
-				*(pszDst++) = L't';
-				pszSrc++;
-				break;
-			case L'\b': // 8 (BS)
-				*(pszDst++) = L'\\';
-				*(pszDst++) = L'b';
-				pszSrc++;
-				break;
-			case 27: //ESC
-				*(pszDst++) = L'\\';
-				*(pszDst++) = L'e';
-				pszSrc++;
-				break;
-			case L'\a': // 7 (BELL)
-				*(pszDst++) = L'\\';
-				*(pszDst++) = L'a';
-				pszSrc++;
-				break;
-			default:
-				// Escape (if possible) ASCII symbols with codes 01..31 (dec)
-				if (wc < L' ')
-				{
-					wchar_t wcn = pszSrc[1];
-					// If next string character is 'hexadecimal' digit - back conversion will be ambiguous
-					if (!((wcn >= L'0' && wcn <= L'9') || (wcn >= L'a' && wcn <= L'f') || (wcn >= L'A' && wcn <= L'F')))
-					{
-						*(pszDst++) = L'\\';
-						*(pszDst++) = L'x';
-						msprintf(pszDst, 3, L"%02X", (UINT)wc);
-						pszDst+=2;
-						break;
-					}
-				}
-				*(pszDst++) = *(pszSrc++);
-		}
+		EscapeChar(pszSrc, pszDst);
 	}
 	else
 	{
 		// Remove escapes: "\\r" --> wchar(13), etc.
-
-		if (*pszSrc == L'\\')
-		{
-			// -- Must be the same set in "Set escapes"
-			switch (pszSrc[1])
-			{
-				case L'"':
-					*(pszDst++) = L'"';
-					pszSrc += 2;
-					break;
-				case L'\\':
-					*(pszDst++) = L'\\';
-					pszSrc += 2;
-					break;
-				case L'r': case L'R':
-					*(pszDst++) = L'\r';
-					pszSrc += 2;
-					break;
-				case L'n': case L'N':
-					*(pszDst++) = L'\n';
-					pszSrc += 2;
-					break;
-				case L't': case L'T':
-					*(pszDst++) = L'\t';
-					pszSrc += 2;
-					break;
-				case L'b': case L'B':
-					*(pszDst++) = L'\b';
-					pszSrc += 2;
-					break;
-				case L'e': case L'E':
-					*(pszDst++) = 27; // ESC
-					pszSrc += 2;
-					break;
-				case L'a': case L'A':
-					*(pszDst++) = L'\a'; // BELL
-					pszSrc += 2;
-					break;
-				case L'x':
-				{
-					wchar_t sTemp[5] = L"", *pszEnd = NULL;
-					lstrcpyn(sTemp, pszSrc+2, 5);
-					UINT wc = wcstoul(sTemp, &pszEnd, 16);
-					if (pszEnd > sTemp)
-					{
-						*(pszDst++) = LOWORD(wc);
-						pszSrc += (pszEnd - sTemp) + 2;
-					}
-					else
-					{
-						*(pszDst++) = *(pszSrc++);
-					}
-					break;
-				}
-				default:
-					*(pszDst++) = *(pszSrc++);
-			}
-		}
-		else
-		{
-			*(pszDst++) = *(pszSrc++);
-		}
+		UnescapeChar(pszSrc, pszDst);
 	}
 }
 
@@ -1452,17 +1317,20 @@ static void DisplayShedulerError(LPCWSTR pszStep, HRESULT hr, LPCWSTR bsTaskName
 {
 	wchar_t szInfo[200] = L"";
 	_wsprintf(szInfo, SKIPCOUNT(szInfo) L" Please check sheduler log.\n" L"HR=%u, TaskName=", (DWORD)hr);
-	wchar_t* pszErr = lstrmerge(pszStep, szInfo, bsTaskName, L"\n", lpCommandLine);
-	DisplayLastError(pszErr, hr);
-	free(pszErr);
+	CEStr szErr(pszStep, szInfo, bsTaskName, L"\n", lpCommandLine);
+	DisplayLastError(szErr, (DWORD)hr);
 }
 #endif
 
-BOOL CreateProcessDemoted(LPWSTR lpCommandLine,
-							 LPSECURITY_ATTRIBUTES lpProcessAttributes, LPSECURITY_ATTRIBUTES lpThreadAttributes,
-							 BOOL bInheritHandles, DWORD dwCreationFlags, LPVOID lpEnvironment,
-							 LPCWSTR lpCurrentDirectory, LPSTARTUPINFOW lpStartupInfo, LPPROCESS_INFORMATION lpProcessInformation,
-							 LPDWORD pdwLastError)
+/// The function starts new process using Windows Task Sheduler
+/// This allows to run process ‘Demoted’ (bAsSystem == false)
+/// or under ‘System’ account (bAsSystem == true)
+// TODO: Server started as bAsSystem is not working properly yet
+BOOL CreateProcessSheduled(bool bAsSystem, LPWSTR lpCommandLine,
+						   LPSECURITY_ATTRIBUTES lpProcessAttributes, LPSECURITY_ATTRIBUTES lpThreadAttributes,
+						   BOOL bInheritHandles, DWORD dwCreationFlags, LPVOID lpEnvironment,
+						   LPCWSTR lpCurrentDirectory, LPSTARTUPINFOW lpStartupInfo, LPPROCESS_INFORMATION lpProcessInformation,
+						   LPDWORD pdwLastError)
 {
 	if (!lpCommandLine || !*lpCommandLine)
 	{
@@ -1470,6 +1338,7 @@ BOOL CreateProcessDemoted(LPWSTR lpCommandLine,
 		return FALSE;
 	}
 
+	// This issue is not actual anymore, because we call put_ExecutionTimeLimit(‘Infinite’)
 	// Issue 1897: Created task stopped after 72 hour, so use "/bypass"
 	CEStr szExe;
 	if (!GetModuleFileName(NULL, szExe.GetBuffer(MAX_PATH), MAX_PATH) || szExe.IsEmpty())
@@ -1477,13 +1346,16 @@ BOOL CreateProcessDemoted(LPWSTR lpCommandLine,
 		DisplayLastError(L"GetModuleFileName(NULL) failed");
 		return FALSE;
 	}
-	CEStr szCommand(lstrmerge(L"/bypass /cmd ", lpCommandLine));
+	CEStr szCommand(L"/bypass /cmd ", lpCommandLine);
 	LPCWSTR pszCmdArgs = szCommand;
 
 	BOOL lbRc = FALSE;
-	BOOL lbTryStdCreate = FALSE;
 
-#if !defined(__GNUC__)
+#if defined(__GNUC__)
+
+	DisplayLastError(L"GNU <taskschd.h> does not have TaskSheduler support yet!", (DWORD)-1);
+
+#else
 
 	// Task не выносит окна созданных задач "наверх"
 	HWND hPrevEmu = FindWindowEx(NULL, NULL, VirtualConsoleClassMain, NULL);
@@ -1503,7 +1375,10 @@ BOOL CreateProcessDemoted(LPWSTR lpCommandLine,
 	BSTR bsDir = lpCurrentDirectory ? SysAllocString(lpCurrentDirectory) : NULL;
 	BSTR bsRoot = SysAllocString(L"\\");
 
-	VARIANT vtUsersSID = {VT_BSTR}; vtUsersSID.bstrVal = SysAllocString(L"S-1-5-32-545");
+	// No need, using TASK_LOGON_INTERACTIVE_TOKEN now
+	// -- VARIANT vtUsersSID = {VT_BSTR}; vtUsersSID.bstrVal = SysAllocString(L"S-1-5-32-545"); // Well Known SID for "\\Builtin\Users" group
+	MBSTR szSystemSID(L"S-1-5-18");
+	VARIANT vtSystemSID = {VT_BSTR}; vtSystemSID.bstrVal = szSystemSID;
 	VARIANT vtZeroStr = {VT_BSTR}; vtZeroStr.bstrVal = SysAllocString(L"");
 	VARIANT vtEmpty = {VT_EMPTY};
 
@@ -1521,11 +1396,12 @@ BOOL CreateProcessDemoted(LPWSTR lpCommandLine,
 	ITaskFolder *pRootFolder = NULL;
 	ITaskService *pService = NULL;
 	HRESULT hr;
-	TASK_STATE taskState;
+	TASK_STATE taskState, prevTaskState;
 	bool bCoInitialized = false;
 	DWORD nTickStart, nDuration;
 	const DWORD nMaxWindowWait = 30000;
-	wchar_t szIndefinitely[] = L"PT0S";
+	const DWORD nMaxSystemWait = 30000;
+	MBSTR szIndefinitely(L"PT0S");
 
 	//  ------------------------------------------------------
 	//  Initialize COM.
@@ -1657,17 +1533,20 @@ BOOL CreateProcessDemoted(LPWSTR lpCommandLine,
 
 	//  ------------------------------------------------------
 	//  Save the task in the root folder.
-	//  Using Well Known SID for \\Builtin\Users group
-	hr = pRootFolder->RegisterTaskDefinition(bsTaskName, pTask, TASK_CREATE, vtUsersSID, vtEmpty, TASK_LOGON_GROUP, vtZeroStr, &pRegisteredTask);
+	hr = pRootFolder->RegisterTaskDefinition(bsTaskName, pTask, TASK_CREATE,
+		//vtUsersSID, vtEmpty, TASK_LOGON_GROUP, // gh-571 - this may start process as wrong user
+		bAsSystem ? vtSystemSID : vtEmpty, vtEmpty, bAsSystem ? TASK_LOGON_SERVICE_ACCOUNT : TASK_LOGON_INTERACTIVE_TOKEN,
+		vtZeroStr, &pRegisteredTask);
 	if (FAILED(hr))
 	{
 		DisplayShedulerError(L"Error registering the task instance.", hr, bsTaskName, lpCommandLine);
 		goto wrap;
 	}
 
+	prevTaskState = (TASK_STATE)-1;
+
 	//  ------------------------------------------------------
 	//  Run the task
-	taskState = TASK_STATE_UNKNOWN;
 	hr = pRegisteredTask->Run(vtEmpty, &pRunningTask);
 	if (FAILED(hr))
 	{
@@ -1675,16 +1554,36 @@ BOOL CreateProcessDemoted(LPWSTR lpCommandLine,
 		goto wrap;
 	}
 
-	#ifdef _DEBUG
-	HRESULT hrRun; hrRun = pRunningTask->get_State(&taskState);
-	#endif
+	HRESULT hrRun; hrRun = pRunningTask->get_State(&prevTaskState);
 
 	//  ------------------------------------------------------
 	// Success! Task successfully started. But our task may end
 	// promptly because it just bypassing the command line
-	{
-		lbRc = TRUE;
+	lbRc = TRUE;
 
+	if (bAsSystem)
+	{
+		nTickStart = GetTickCount();
+		nDuration = 0;
+		_ASSERTE(hCreated==NULL);
+		hCreated = NULL;
+
+		while (nDuration <= nMaxSystemWait/*30000*/)
+		{
+			hrRun = pRunningTask->get_State(&taskState);
+			if (FAILED(hr))
+				break;
+			if (taskState == TASK_STATE_RUNNING)
+				break; // OK, started
+			if (taskState == TASK_STATE_READY)
+				break; // Already finished?
+
+			Sleep(100);
+			nDuration = (GetTickCount() - nTickStart);
+		}
+	}
+	else
+	{
 		// Success! Program was started.
 		// Give 30 seconds for new window appears and bring it to front
 		LPCWSTR pszExeName = PointToName(szExe);
@@ -1695,7 +1594,7 @@ BOOL CreateProcessDemoted(LPWSTR lpCommandLine,
 			_ASSERTE(hCreated==NULL);
 			hCreated = NULL;
 
-			while (nDuration <= nMaxWindowWait/*20000*/)
+			while (nDuration <= nMaxWindowWait/*30000*/)
 			{
 				HWND hTop = NULL;
 				while ((hTop = FindWindowEx(NULL, hTop, VirtualConsoleClassMain, NULL)) != NULL)
@@ -1737,7 +1636,7 @@ wrap:
 	SysFreeString(bsArgs);
 	if (bsDir) SysFreeString(bsDir);
 	SysFreeString(bsRoot);
-	VariantClear(&vtUsersSID);
+	//VariantClear(&vtUsersSID);
 	VariantClear(&vtZeroStr);
 	SafeRelease(pRegisteredTask);
 	SafeRelease(pRunningTask);
@@ -1754,222 +1653,25 @@ wrap:
 	// End of Task-scheduler mode
 #endif
 
-	#if defined(__GNUC__)
-	if (!lbRc)
-	{
-		lbTryStdCreate = TRUE;
-	}
-	#endif
+	return lbRc;
+}
 
-#if 0
-	// There is IShellDispatch2::ShellExecute but explorer does not create/connect OutProcess servers...
+BOOL CreateProcessDemoted(LPWSTR lpCommandLine,
+						  LPSECURITY_ATTRIBUTES lpProcessAttributes, LPSECURITY_ATTRIBUTES lpThreadAttributes,
+						  BOOL bInheritHandles, DWORD dwCreationFlags, LPVOID lpEnvironment,
+						  LPCWSTR lpCurrentDirectory, LPSTARTUPINFOW lpStartupInfo, LPPROCESS_INFORMATION lpProcessInformation,
+						  LPDWORD pdwLastError)
+{
+	BOOL lbRc;
 
-	LPCWSTR pszDefCmd = cmdNew;
-	wchar_t szExe[MAX_PATH+1];
-	if (0 != NextArg(&pszDefCmd, szExe))
-	{
-		DisplayLastError(L"Invalid cmd line. ConEmu.exe not exists", -1);
-		return FALSE;
-	}
-
-	OleInitialize(NULL);
-
-	b = FALSE;
-	IShellDispatch2 *pshl;
-	CLSCTX ctx = CLSCTX_INPROC_HANDLER; // CLSCTX_SERVER;
-	HRESULT hr = CoCreateInstance(CLSID_Shell, NULL, ctx, IID_IShellDispatch2, (void**)&pshl);
-	if (SUCCEEDED(hr))
-	{
-		BSTR bsFile = SysAllocString(szExe);
-		VARIANT vtArgs; vtArgs.vt = VT_BSTR; vtArgs.bstrVal = SysAllocString(pszDefCmd);
-		VARIANT vtDir; vtDir.vt = VT_BSTR; vtDir.bstrVal = SysAllocString(gpConEmu->ms_ConEmuExeDir);
-		VARIANT vtOper; vtOper.vt = VT_BSTR; vtOper.bstrVal = SysAllocString(L"open");
-		VARIANT vtShow; vtShow.vt = VT_I4; vtShow.lVal = SW_SHOWNORMAL;
-
-		hr = pshl->ShellExecute(bsFile, vtArgs, vtDir, vtOper, vtShow);
-		b = SUCCEEDED(hr);
-
-		VariantClear(&vtArgs);
-		VariantClear(&vtDir);
-		VariantClear(&vtOper);
-		SysFreeString(bsFile);
-
-		pshl->Release();
-	}
-#endif
-
-
-#if 0
-	// CreateRestrictedToken method - fails
-	// This starts GUI, but it fails when trying to start console server - weird error 0xC0000142
-
-	HANDLE hToken = NULL, hTokenRest = NULL;
-
-	if (OpenProcessToken(GetCurrentProcess(),
-	                    TOKEN_DUPLICATE | TOKEN_ASSIGN_PRIMARY | TOKEN_IMPERSONATE | TOKEN_QUERY | TOKEN_EXECUTE,
-	                    &hToken))
-	{
-		enum WellKnownAuthorities
-		{
-			NullAuthority = 0, WorldAuthority, LocalAuthority, CreatorAuthority,
-			NonUniqueAuthority, NtAuthority, MandatoryLabelAuthority = 16
-		};
-		SID *pAdmSid = (SID*)calloc(sizeof(SID)+sizeof(DWORD)*2,1);
-		pAdmSid->Revision = SID_REVISION;
-		pAdmSid->SubAuthorityCount = 2;
-		pAdmSid->IdentifierAuthority.Value[5] = NtAuthority;
-		pAdmSid->SubAuthority[0] = SECURITY_BUILTIN_DOMAIN_RID;
-		pAdmSid->SubAuthority[1] = DOMAIN_ALIAS_RID_ADMINS;
-		//TOKEN_GROUPS grp = {1, {pAdmSid, SE_GROUP_USE_FOR_DENY_ONLY}};
-		SID_AND_ATTRIBUTES sidsToDisable[] =
-		{
-			{pAdmSid, SE_GROUP_USE_FOR_DENY_ONLY}
-		};
-
-		#ifdef __GNUC__
-		//HMODULE hAdvApi = GetModuleHandle(L"AdvApi32.dll");
-		//CreateRestrictedToken_t CreateRestrictedToken = (CreateRestrictedToken_t)GetProcAddress(hAdvApi, "CreateRestrictedToken");
-		#endif
-
-		if (!CreateRestrictedToken(hToken, 0,
-		                         countof(sidsToDisable), sidsToDisable,
-		                         0, NULL,
-								 0, NULL,
-								 &hTokenRest))
-		{
-			if (pdwLastError) *pdwLastError = GetLastError();
-		}
-		//if (!DuplicateToken(hToken, SecurityImpersonation, &hTokenRest))
-		//{
-		//	if (pdwLastError) *pdwLastError = GetLastError();
-		//}
-		//else if (!AdjustTokenGroups(hTokenRest, TRUE, &grp, 0, NULL, NULL))
-		//{
-		//	if (pdwLastError) *pdwLastError = GetLastError();
-		//}
-		else
-		{
-			if (CreateProcessAsUserW(hTokenRest, NULL, lpCommandLine,
-							 lpProcessAttributes, lpThreadAttributes,
-							 bInheritHandles, dwCreationFlags, lpEnvironment,
-							 lpCurrentDirectory, lpStartupInfo, lpProcessInformation))
-			{
-				lbRc = TRUE;
-			}
-			else
-			{
-				if (pdwLastError) *pdwLastError = GetLastError();
-			}
-		}
-
-		if (hTokenRest) CloseHandle(hTokenRest);
-
-		free(pAdmSid);
-		CloseHandle(hToken);
-	}
-	else
-	{
-		if (pdwLastError) *pdwLastError = GetLastError();
-	}
-
-	// End of CreateRestrictedToken method
-#endif
-
-
-#if 0
-	// Trying to use Token from Shell (explorer/desktop)
-	// Fails. Create process returns error.
-
-	// GetDesktopWindow() - это не то, оно к CSRSS принадлежит (Win8 по крайней мере)
-	HWND hDesktop = GetShellWindow();
-	if (!hDesktop)
-	{
-		if (pdwLastError) *pdwLastError = GetLastError();
-		DisplayLastError(L"Failed to find desktop window!");
-		return FALSE;
-	}
-
-	DWORD nDesktopPID = 0; GetWindowThreadProcessId(hDesktop, &nDesktopPID);
-	HANDLE hProcess = OpenProcess(MAXIMUM_ALLOWED, FALSE, nDesktopPID);
-	if (!hProcess)
-	{
-		DWORD nErrCode = GetLastError();
-		if (pdwLastError) *pdwLastError = nErrCode;
-		wchar_t szInfo[100];
-		_wsprintf(szInfo, SKIPLEN(countof(szInfo)) L"Failed to open handle for desktop process!\nDesktopWND=x%08X, PID=%u", (DWORD)hDesktop, nDesktopPID);
-		DisplayLastError(szInfo, nErrCode);
-		return FALSE;
-	}
-
-	HANDLE hTokenDesktop = NULL;
-	if (OpenProcessToken(hProcess,
-						TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY | TOKEN_DUPLICATE | TOKEN_IMPERSONATE |
-						TOKEN_ASSIGN_PRIMARY | TOKEN_EXECUTE | TOKEN_ADJUST_SESSIONID | TOKEN_READ | TOKEN_WRITE,
-						&hTokenDesktop))
-	{
-		//CAdjustProcessToken Adjust;
-		//Adjust.Enable(2, SE_ASSIGNPRIMARYTOKEN_NAME, SE_INCREASE_QUOTA_NAME);
-
-		//SetLastError(0);
-		//BOOL bImpRc = ImpersonateLoggedOnUser(hTokenDesktop);
-		//DWORD nImpErr = GetLastError();
-
-		//if (!bImpRc)
-		//{
-		//	if (pdwLastError) *pdwLastError = nImpErr;
-		//	DisplayLastError(L"Failed to impersonate to desktop logon!", nImpErr);
-		//}
-		//else
-		{
-			lpStartupInfo->lpDesktop = L"winsta0\\default";
-
-			#ifdef _DEBUG
-			DWORD cbRet;
-			TOKEN_TYPE tt;
-			TOKEN_SOURCE ts;
-			DWORD nDeskSessionId, nOurSessionId;
-			GetTokenInformation(hTokenDesktop, TokenType, &tt, sizeof(tt), &cbRet);
-			GetTokenInformation(hTokenDesktop, TokenSource, &ts, sizeof(ts), &cbRet);
-			GetTokenInformation(hTokenDesktop, TokenSessionId, &nDeskSessionId, sizeof(nDeskSessionId), &cbRet);
-			#endif
-
-			lbRc =
-				CreateProcessWithTokenW(hTokenDesktop, LOGON_WITH_PROFILE,
-				//CreateProcessAsUserW(hTokenDesktop,
-				//CreateProcessW(
-					NULL, lpCommandLine,
-					//lpProcessAttributes, lpThreadAttributes, bInheritHandles,
-					dwCreationFlags, lpEnvironment,
-					lpCurrentDirectory, lpStartupInfo, lpProcessInformation);
-
-			RevertToSelf();
-
-			if (!lbRc)
-			{
-				DWORD nErrCode = GetLastError();
-				if (pdwLastError) *pdwLastError = nErrCode;
-				DisplayLastError(L"Failed to impersonate to desktop logon!", nErrCode);
-			}
-			else
-			{
-				if (pdwLastError) *pdwLastError = 0;
-			}
-
-
-		}
-
-		CloseHandle(hTokenDesktop);
-	}
-	else
-	{
-		if (pdwLastError) *pdwLastError = GetLastError();
-	}
-
-	CloseHandle(hProcess);
-#endif
+	lbRc = CreateProcessSheduled(false, lpCommandLine,
+						   lpProcessAttributes, lpThreadAttributes,
+						   bInheritHandles, dwCreationFlags, lpEnvironment,
+						   lpCurrentDirectory, lpStartupInfo, lpProcessInformation,
+						   pdwLastError);
 
 	// If all methods fails - try to execute "as is"?
-	if (lbTryStdCreate)
+	if (!lbRc)
 	{
 		lbRc = CreateProcess(NULL, lpCommandLine,
 							 lpProcessAttributes, lpThreadAttributes,
@@ -2276,6 +1978,12 @@ int MsgBox(LPCTSTR lpText, UINT uType, LPCTSTR lpCaption /*= NULL*/, HWND ahPare
 	HooksUnlocker;
 	MSetter lInCall(&gnInMsgBox);
 
+	if (gpSetCls->isAdvLogging)
+	{
+		CEStr lsLog(lpCaption, lpCaption ? L":: " : NULL, lpText);
+		LogString(lsLog);
+	}
+
 	// If there were problems with displaying error box, MessageBox will return default button
 	// This may cause infinite loops in some cases
 	SetLastError(0);
@@ -2419,8 +2127,6 @@ int DisplayLastError(LPCTSTR asLabel, DWORD dwError /* =0 */, DWORD dwMsgFlags /
 
 	if (!dwMsgFlags) dwMsgFlags = MB_SYSTEMMODAL | MB_ICONERROR;
 
-	WARNING("!!! Заменить MsgBox на WaitForSingleObject(CreateThread(out,Title,dwMsgFlags),INFINITE);");
-
 	BOOL lb = gbInDisplayLastError; gbInDisplayLastError = TRUE;
 	nBtn = MsgBox(out ? out : asLabel, dwMsgFlags, asTitle, hParent);
 	gbInDisplayLastError = lb;
@@ -2446,7 +2152,7 @@ void WarnCreateWindowFail(LPCWSTR pszDescription, HWND hParent, DWORD nErrCode)
 			gpConEmu->mp_Inside->m_InsideParentInfo.ParentPID,
 			gpConEmu->mp_Inside->m_InsideParentInfo.ParentParentPID,
 			(LPVOID)gpConEmu->mp_Inside->mh_InsideParentWND);
-		CEStr lsLog = lstrmerge(szCreateFail, gpConEmu->mp_Inside->m_InsideParentInfo.ExeName);
+		CEStr lsLog(szCreateFail, gpConEmu->mp_Inside->m_InsideParentInfo.ExeName);
 		LogString(lsLog);
 	}
 
@@ -2549,26 +2255,6 @@ void MessageLoop()
 	}
 
 	gbMessagingStarted = false;
-}
-
-bool PtDiffTest(int x1, int y1, int x2, int y2, UINT maxDx, UINT maxDy)
-{
-	int nX = abs(x1 - x2);
-
-	if (nX > (int)maxDx)
-		return false;
-
-	int nY = abs(y1 - y2);
-
-	if (nY > (int)maxDy)
-		return false;
-
-	return true;
-}
-
-bool PtDiffTest(POINT C, int aX, int aY, UINT D)
-{
-	return PtDiffTest(C.x, C.y, aX, aY, D, D);
 }
 
 bool PtMouseDblClickTest(const MSG& msg1, const MSG msg2)
@@ -3435,7 +3121,7 @@ HRESULT UpdateAppUserModelID()
 	{
 		_ASSERTE(pszColon!=NULL && "::<CESERVER_REQ_VER> is expected at the tail!");
 	}
-	CEStr AppID = lstrmerge(APP_MODEL_ID_PREFIX/*L"Maximus5.ConEmu."*/, lsTempBuf.ms_Val);
+	CEStr AppID(APP_MODEL_ID_PREFIX/*L"Maximus5.ConEmu."*/, lsTempBuf.ms_Val);
 
 	// And update it
 	HRESULT hr = E_NOTIMPL;
@@ -3540,7 +3226,7 @@ int CheckZoneIdentifiers(bool abAutoUnblock)
 
 		for (int j = 0; pszFiles[j]; j++)
 		{
-			CEStr lsFile = JoinPath(pszDirs[i], pszFiles[j]);
+			CEStr lsFile(JoinPath(pszDirs[i], pszFiles[j]));
 			int nZone = 0;
 			if (HasZoneIdentifier(lsFile, nZone)
 				&& (nZone != 0 /*LocalComputer*/))
@@ -3555,7 +3241,7 @@ int CheckZoneIdentifiers(bool abAutoUnblock)
 		return 0; // All files are OK
 	}
 
-	CEStr lsMsg = lstrmerge(
+	CEStr lsMsg(
 		L"ConEmu binaries were marked as ‘Downloaded from internet’:\r\n",
 		szZonedFiles.ms_Val, L"\r\n\r\n"
 		L"This may cause blocking or access denied errors!");
@@ -3795,7 +3481,7 @@ int CheckForDebugArgs(LPCWSTR asCmdLine)
 	if (debug)
 	{
 		wchar_t szTitle[128]; _wsprintf(szTitle, SKIPLEN(countof(szTitle)) L"Conemu started, PID=%i", GetCurrentProcessId());
-		CEStr lsText = lstrmerge(L"GetCommandLineW()\n", GetCommandLineW(), L"\n\n\n" L"lpCmdLine\n", asCmdLine);
+		CEStr lsText(L"GetCommandLineW()\n", GetCommandLineW(), L"\n\n\n" L"lpCmdLine\n", asCmdLine);
 		MessageBox(NULL, lsText, szTitle, MB_OK|MB_ICONINFORMATION|MB_SETFOREGROUND|MB_SYSTEMMODAL);
 		nDbg = IsDebuggerPresent();
 	}
@@ -4574,5 +4260,11 @@ done:
 wrap:
 	// HeapDeinitialize() - Нельзя. Еще живут глобальные объекты
 	DEBUGSTRSTARTUP(L"WinMain exit");
+	// If TerminateThread was called at least once,
+	// normal process shutdown may hangs
+	if (wasTerminateThreadCalled())
+	{
+		TerminateProcess(GetCurrentProcess(), iMainRc);
+	}
 	return iMainRc;
 }

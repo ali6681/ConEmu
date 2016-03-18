@@ -69,13 +69,15 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "VConText.h"
 #include "VirtualConsole.h"
 
-#define DEBUGSTRSIZE(s) DEBUGSTR(s)
+#define DEBUGSTRSIZE(s) //DEBUGSTR(s)
 #define DEBUGSTRSIZE2(s) DEBUGSTR(s) // Warning level
 #define DEBUGSTRPKT(s) //DEBUGSTR(s)
 #define DEBUGSTRCURSORPOS(s) //DEBUGSTR(s)
 #define DEBUGSTRMOUSE(s) //DEBUGSTR(s)
-#define DEBUGSTRTOPLEFT(s) DEBUGSTR(s)
+#define DEBUGSTRTOPLEFT(s) //DEBUGSTR(s)
 #define DEBUGSTRTRUEMOD(s) //DEBUGSTR(s)
+#define DEBUGSTRLINK(s) //DEBUGSTR(s)
+#define DEBUGSTRSEL(s) DEBUGSTR(s)
 
 // ANSI, without "\r\n"
 #define IFLOGCONSOLECHANGE gpSetCls->isAdvLogging>=2
@@ -381,6 +383,7 @@ bool CRealBuffer::LoadDumpConsole(LPCWSTR asDumpFile)
 		}
 	}
 
+	con.mb_ConDataValid = true;
 	con.bConsoleDataChanged = TRUE;
 
 	lbRc = true; // OK
@@ -532,6 +535,7 @@ bool CRealBuffer::LoadDataFromDump(const CONSOLE_SCREEN_BUFFER_INFO& storedSbi, 
 		//wmemmove(con.pConChar, dump.pszBlock1, cchCellCount);
 	}
 
+	con.mb_ConDataValid = true;
 	con.bConsoleDataChanged = TRUE;
 
 	lbRc = true; // OK
@@ -2125,7 +2129,7 @@ BOOL CRealBuffer::LoadDataFromSrv(DWORD CharCount, CHAR_INFO* pData)
 			ch = lpCur->Char.UnicodeChar;
 			//2009-09-25. Некоторые (старые?) программы умудряются засунуть в консоль символы (ASC<32)
 			//            их нужно заменить на юникодные аналоги
-			*(lpChar++) = (ch < 32) ? gszAnalogues[(WORD)ch] : ch;
+			*(lpChar++) = ((WORD)ch < 32) ? gszAnalogues[(WORD)ch] : ch;
 		}
 
 		// Для использования строковых функций - гарантируем ASCIIZ буфера
@@ -2137,6 +2141,8 @@ BOOL CRealBuffer::LoadDataFromSrv(DWORD CharCount, CHAR_INFO* pData)
 		{
 			_ASSERTE(lpChar < (con.pConChar + con.nConBufCells));
 		}
+
+		con.mb_ConDataValid = true;
 
 		HEAPVAL
 	}
@@ -2821,6 +2827,11 @@ bool CRealBuffer::ResetLastMousePos()
 	return bChanged;
 }
 
+void CRealBuffer::ResetHighlightHyperlinks()
+{
+	con.etr.etrLast = etr_None;
+}
+
 bool CRealBuffer::ProcessFarHyperlink(bool bUpdateScreen)
 {
 	bool bChanged = false;
@@ -2906,16 +2917,20 @@ bool CRealBuffer::ProcessFarHyperlink(UINT messg, COORD crFrom, bool bUpdateScre
 	ExpandTextRangeType rc = CanProcessHyperlink(crStart)
 		? ExpandTextRange(crStart, crEnd, etr_AnyClickable, &szText)
 		: etr_None;
+	bool bChanged = con.etrWasChanged || (con.etr.etrLast != rc);
 	if (memcmp(&crStart, &con.etr.mcr_FileLineStart, sizeof(crStart)) != 0
 		|| memcmp(&crEnd, &con.etr.mcr_FileLineEnd, sizeof(crStart)) != 0)
 	{
 		con.etr.mcr_FileLineStart = crStart;
 		con.etr.mcr_FileLineEnd = crEnd;
 		// bUpdateScreen если вызов идет из GetConsoleData для коррекции отдаваемых координат
-		if (bUpdateScreen)
-		{
-			UpdateSelection(); // обновить на экране
-		}
+		bChanged = true;
+	}
+
+	if (bChanged && bUpdateScreen)
+	{
+		// Refresh on-screen
+		UpdateHyperlink();
 	}
 
 	if ((rc & etr_File) || (rc & etr_Url))
@@ -3334,82 +3349,186 @@ bool CRealBuffer::OnMouse(UINT messg, WPARAM wParam, int x, int y, COORD crMouse
 	DEBUGSTRMOUSE(szDbgInfo);
 	#endif
 
+	bool lbSkip = true;
+	bool lbFarBufferSupported = false;
+	bool lbMouseSendAllowed = false;
+	bool lbMouseOverScroll = false;
+	bool bSelAllowed = false;
+	DWORD nModifierPressed = 0;
+	DWORD nModifierNoEmptyPressed = 0;
+
 	// Ensure that coordinates are correct
 	if (!PatchMouseCoords(x, y, crMouse))
 	{
 		if (isSelectionPresent())
-			return true; // even if outside - don't send to console!
-		return false;
+			goto wrap; // even if outside - don't send to console!
+		lbSkip = false;
+		goto wrap;
 	}
 
 	mcr_LastMousePos = crMouse;
 
-	bool  bSelAllowed = isSelectionAllowed();
-
-	if (bSelAllowed && gpSet->isCTSIntelligent
-		&& !isSelectionPresent()
-		&& !gpConEmu->isSelectionModifierPressed(true))
+	bSelAllowed = isSelectionPresent();
+	// No sense to query isSelectionAllowed on any MouseMove
+	if (!bSelAllowed)
 	{
-		if (messg == WM_LBUTTONDOWN)
+		if ((con.ISel.State != IS_None)
+			|| (messg == WM_LBUTTONDOWN || messg == WM_LBUTTONUP || messg == WM_LBUTTONDBLCLK)
+			|| (messg == WM_RBUTTONDOWN || messg == WM_RBUTTONUP)
+			|| (messg == WM_MBUTTONDOWN || messg == WM_MBUTTONUP)
+			)
 		{
-			con.mpt_IntelliLClick = MakePoint(x,y);
-			con.mb_IntelliStored = TRUE;
+			bSelAllowed = isSelectionAllowed();
+			#ifdef _DEBUG
+			if (bSelAllowed)
+				DEBUGSTRSEL(L"Selection: isSelectionAllowed()==true");
+			#endif
 		}
-		else if (con.mb_IntelliStored)
-		{
-			if (!isPressed(VK_LBUTTON))
-			{
-				con.mb_IntelliStored = FALSE;
-			}
-			else if (messg == WM_MOUSEMOVE)
-			{
-				int nMinX = gpSetCls->FontWidth();
-				int nMinY = gpSetCls->FontHeight();
-				int nMinDiff = max(nMinX, nMinY);
-				int nXdiff = x - con.mpt_IntelliLClick.x;
-				int nYdiff = y - con.mpt_IntelliLClick.y;
-				// Приоритет - текстовому выделению?
-				DWORD nForce = 0;
-				if (_abs(nXdiff) >= nMinDiff)
-					nForce = CONSOLE_TEXT_SELECTION;
-				else if (_abs(nYdiff) >= nMinDiff)
-					nForce = CONSOLE_BLOCK_SELECTION;
-				// GO!
-				if (nForce)
-				{
-					gpConEmu->ForceSelectionModifierPressed(nForce);
-					_ASSERTE((nForce & (CONSOLE_TEXT_SELECTION|CONSOLE_BLOCK_SELECTION)) == nForce);
-					con.m_sel.dwFlags |= (nForce & (CONSOLE_TEXT_SELECTION|CONSOLE_BLOCK_SELECTION));
-					OnMouseSelection(WM_LBUTTONDOWN, wParam, con.mpt_IntelliLClick.x, con.mpt_IntelliLClick.y);
-				}
-			}
-		}
-	}
-	else
-	{
-		con.mb_IntelliStored = FALSE;
 	}
 
 	if (bSelAllowed)
 	{
+		nModifierPressed = gpConEmu->isSelectionModifierPressed(true);
+		nModifierNoEmptyPressed = gpConEmu->isSelectionModifierPressed(false);
+	}
+
+	if (bSelAllowed && gpSet->isCTSIntelligent
+		&& !isSelectionPresent()
+		&& !nModifierPressed)
+	{
 		if (messg == WM_LBUTTONDOWN)
 		{
-			// Начало обработки выделения
-			if (OnMouseSelection(messg, wParam, x, y))
-				return true;
+			DEBUGSTRSEL(L"Selection: set IS_LBtnDown on WM_LBUTTONDOWN");
+			con.ISel.LClickPt = MakePoint(x,y);
+			con.ISel.ClickTick = GetTickCount();
+			con.ISel.State = IS_LBtnDown;
+		}
+		else if (con.ISel.State)
+		{
+			if (!isPressed(VK_LBUTTON))
+			{
+				DEBUGSTRSEL(L"Selection: set IS_LBtnReleased");
+				con.ISel.State = IS_LBtnReleased;
+			}
+			else
+			{
+				int nMinX = gpSetCls->FontWidth();
+				int nMinY = gpSetCls->FontHeight();
+				int nMinDiff = max(nMinX, nMinY);
+				int nXdiff = x - con.ISel.LClickPt.x;
+				int nYdiff = y - con.ISel.LClickPt.y;
+
+				if ((messg == WM_MOUSEMOVE) && (con.ISel.State == IS_LBtnDown))
+				{
+					// Check first for Text selection
+					DWORD nForce = 0;
+					if (_abs(nXdiff) >= nMinDiff)
+						nForce = CONSOLE_TEXT_SELECTION;
+					else if (_abs(nYdiff) >= nMinDiff)
+						nForce = CONSOLE_BLOCK_SELECTION;
+					// GO!
+					if (nForce)
+					{
+						DEBUGSTRSEL(L"Selection: Starting due to MouseMove and IntelliSel");
+						gpConEmu->ForceSelectionModifierPressed(nForce);
+						_ASSERTE((nForce & (CONSOLE_TEXT_SELECTION|CONSOLE_BLOCK_SELECTION)) == nForce);
+						con.m_sel.dwFlags |= (nForce & (CONSOLE_TEXT_SELECTION|CONSOLE_BLOCK_SELECTION));
+						OnMouseSelection(WM_LBUTTONDOWN, wParam, con.ISel.LClickPt.x, con.ISel.LClickPt.y);
+						goto wrap;
+					}
+				}
+				else if ((messg == WM_LBUTTONDBLCLK) && (con.ISel.State == IS_LBtnReleased))
+				{
+					if ((_abs(nXdiff) < nMinDiff) && (_abs(nYdiff) < nMinDiff))
+					{
+						// Simulate started stream selection
+						if (!(con.m_sel.dwFlags & (CONSOLE_TEXT_SELECTION|CONSOLE_BLOCK_SELECTION)))
+						{
+							DEBUGSTRSEL(L"Selection: Simulating CONSOLE_TEXT_SELECTION started");
+							con.m_sel.dwFlags = CONSOLE_TEXT_SELECTION|CONSOLE_MOUSE_SELECTION;
+						}
+
+						// And expand it to word boundary
+						DEBUGSTRSEL(L"Selection: Trigger WM_LBUTTONDBLCLK on IntelliSel");
+						OnMouseSelection(WM_LBUTTONDBLCLK, wParam, x, y);
+
+						// To be sure Triple-Click would be OK
+						if (con.m_sel.dwFlags)
+							con.m_sel.dwFlags |= CONSOLE_DBLCLICK_SELECTION;
+
+						DEBUGSTRSEL(L"Selection: set IS_None (auto)");
+						con.ISel.State = IS_None;
+
+						goto wrap;
+					}
+				}
+			}
+		}
+	}
+	else if (con.ISel.State)
+	{
+		if ((GetTickCount() - con.ISel.ClickTick) <= GetDoubleClickTime())
+		{
+			DEBUGSTRSEL(L"Selection: set IS_None (timeout)");
+			con.ISel.State = IS_None;
+		}
+	}
+
+	if (bSelAllowed)
+	{
+		// Click outside selection region - would reset active selection
+		if (((messg == WM_LBUTTONDOWN) || ((messg == WM_LBUTTONUP) && !(con.m_sel.dwFlags & CONSOLE_MOUSE_DOWN)))
+			&& gpSet->isCTSIntelligent // Only intelligent mode?
+			&& isSelectionPresent())
+		{
+			bool bInside = isMouseInsideSelection(x, y);
+			if (!bInside)
+			{
+				DEBUGSTRSEL(L"Selection: DoSelectionFinalize#L");
+				DoSelectionFinalize(false);
+			}
+
+			if (messg == WM_LBUTTONDOWN)
+			{
+				DEBUGSTRSEL(L"Selection: set IS_LBtnDown on WM_LBUTTONDOWN after reset");
+				con.ISel.LClickPt = MakePoint(x,y);
+				con.ISel.ClickTick = GetTickCount();
+				con.ISel.State = IS_LBtnDown;
+			}
+
+			// Skip LBtnUp
+			if ((messg == WM_LBUTTONUP)
+				// but allow LBtnDown if it's inside selection (double and triple clicks)
+				|| (!bInside && (messg == WM_LBUTTONDOWN) && !nModifierNoEmptyPressed))
+			{
+				// Anyway, clicks would be ignored
+				#ifdef _DEBUG
+				_wsprintf(szDbgInfo, SKIPCOUNT(szDbgInfo) L"Selection: %s %s ignored", GetMouseMsgName(messg), bInside ? L"Inside" : L"Outside");
+				DEBUGSTRSEL(szDbgInfo);
+				#endif
+				con.mn_SkipNextMouseEvent = (messg == WM_LBUTTONDOWN) ? WM_LBUTTONUP : 0;
+				goto wrap;
+			}
+		}
+
+		if (messg == WM_LBUTTONDOWN)
+		{
+			// Selection mode would be started here
+			if (OnMouseSelection(WM_LBUTTONDOWN, wParam, x, y))
+				goto wrap;
 		}
 
 		// Если выделение еще не начато, но удерживается модификатор - игнорировать WM_MOUSEMOVE
 		if (messg == WM_MOUSEMOVE && !con.m_sel.dwFlags)
 		{
-			if (gpConEmu->isSelectionModifierPressed(false))
+			if (nModifierNoEmptyPressed)
 			{
 				// Пропустить, пользователь собирается начать выделение, не посылать движение мыши в консоль
-				return true;
+				goto wrap;
 			}
 		}
 
-		if (((gpSet->isCTSRBtnAction == 2) || ((gpSet->isCTSRBtnAction == 3) && !isSelectionPresent()))
+		if (((gpSet->isCTSRBtnAction == 2/*Paste*/) || ((gpSet->isCTSRBtnAction == 3/*Auto*/) && !isSelectionPresent()))
 				&& (messg == WM_RBUTTONDOWN || messg == WM_RBUTTONUP)
 		        && ((gpSet->isCTSActMode == 2 && mp_RCon->isBufferHeight() && !mp_RCon->isFarBufferSupported())
 		            || (gpSet->isCTSActMode == 1 && gpSet->IsModifierPressed(vkCTSVkAct, true))))
@@ -3420,18 +3539,21 @@ bool CRealBuffer::OnMouse(UINT messg, WPARAM wParam, int x, int y, COORD crMouse
 				// and if selection exists copy it first and paste internally
 				if (isSelectionPresent() && gpSet->isCTSIntelligent)
 				{
+					DEBUGSTRSEL(L"Selection: DoCopyPaste#R");
 					DoCopyPaste(true, true);
 				}
 				else
 				{
 					// Paste is useless in "Alternative mode" or while selection is present...
+					DEBUGSTRSEL(L"Selection: DoSelectionFinalize#R");
 					DoSelectionFinalize(false);
 					// And Paste itself
+					DEBUGSTRSEL(L"Selection: Paste#R");
 					mp_RCon->Paste();
 				}
 			}
 
-			return true;
+			goto wrap;
 		}
 
 		if (((gpSet->isCTSMBtnAction == 2) || ((gpSet->isCTSMBtnAction == 3) && !isSelectionPresent()))
@@ -3439,9 +3561,13 @@ bool CRealBuffer::OnMouse(UINT messg, WPARAM wParam, int x, int y, COORD crMouse
 		        && ((gpSet->isCTSActMode == 2 && mp_RCon->isBufferHeight() && !mp_RCon->isFarBufferSupported())
 		            || (gpSet->isCTSActMode == 1 && gpSet->IsModifierPressed(vkCTSVkAct, true))))
 		{
-			if (messg == WM_MBUTTONUP) mp_RCon->Paste();
+			if (messg == WM_MBUTTONUP)
+			{
+				DEBUGSTRSEL(L"Selection: Paste#M");
+				mp_RCon->Paste();
+			}
 
-			return true;
+			goto wrap;
 		}
 	}
 
@@ -3455,14 +3581,16 @@ bool CRealBuffer::OnMouse(UINT messg, WPARAM wParam, int x, int y, COORD crMouse
 			{
 				// Пускать или нет событие мыши в консоль?
 				// Лучше наверное не пускать, а то вьювер может заклинить на прокрутке, например
-				return true;
+				goto wrap;
 			}
 		}
 	}
 
-	bool lbFarBufferSupported = mp_RCon->isFarBufferSupported();
-	bool lbMouseSendAllowed = !gpSet->isDisableMouse && mp_RCon->isSendMouseAllowed();
-	bool lbMouseOverScroll = false;
+	// Init variables
+	lbFarBufferSupported = mp_RCon->isFarBufferSupported();
+	lbMouseSendAllowed = !gpSet->isDisableMouse && mp_RCon->isSendMouseAllowed();
+	lbMouseOverScroll = false;
+
 	// Проверять мышку имеет смысл только если она пересылается в фар, а не работает на прокрутку
 	if ((messg == WM_MOUSEWHEEL) || (messg == WM_MOUSEHWHEEL))
 	{
@@ -3480,13 +3608,14 @@ bool CRealBuffer::OnMouse(UINT messg, WPARAM wParam, int x, int y, COORD crMouse
 		if ((messg == WM_MOUSEWHEEL) || (messg == WM_MOUSEHWHEEL))
 		{
 			_ASSERTE(FALSE && "Must be processed in CRealConsole::OnScroll");
-			return true; // обработано
+			goto wrap; // обработано
 		}
 
 		if (!isConSelectMode())
 		{
-			// Пропустить в консоль, если это НЕ Far
-			return (m_Type != rbt_Primary);
+			// Allow posting mouse event to console if this is NOT a Far.exe
+			lbSkip = (m_Type != rbt_Primary);
+			goto wrap;
 		}
 	}
 
@@ -3494,8 +3623,11 @@ bool CRealBuffer::OnMouse(UINT messg, WPARAM wParam, int x, int y, COORD crMouse
 	if (con.m_sel.dwFlags != 0)
 	{
 		// Ручная обработка выделения, на консоль полагаться не следует...
+		#ifdef _DEBUG
+		if (messg != WM_MOUSEMOVE) DEBUGSTRSEL(L"Seletion: (con.m_sel.dwFlags != 0)");
+		#endif
 		OnMouseSelection(messg, wParam, x, y);
-		return true;
+		goto wrap;
 	}
 
 	// При правом клике на KeyBar'е - показать PopupMenu с вариантами модификаторов F-клавиш
@@ -3562,7 +3694,7 @@ bool CRealBuffer::OnMouse(UINT messg, WPARAM wParam, int x, int y, COORD crMouse
 					con.ptRClick4KeyBar = mp_RCon->mp_VCon->ConsoleToClient((vk==VK_F1)?(px+1):(px+2), lcrScr.Y);
 					ClientToScreen(mp_RCon->GetView(), &con.ptRClick4KeyBar);
 					con.nRClickVK = vk;
-					return true;
+					goto wrap;
 				}
 			}
 		}
@@ -3604,13 +3736,13 @@ bool CRealBuffer::OnMouse(UINT messg, WPARAM wParam, int x, int y, COORD crMouse
 
 			//Done
 			con.bRClick4KeyBar = FALSE;
-			return true;
+			goto wrap;
 		}
 		else if (messg == WM_MOUSEMOVE)
 		{
 			_ASSERTE(con.bRClick4KeyBar);
 			TODO("«Отпустить» если был сдвиг?");
-			return true; // не пропускать в консоль
+			goto wrap; // не пропускать в консоль
 		}
 	}
 	else if (con.bRClick4KeyBar)
@@ -3618,8 +3750,19 @@ bool CRealBuffer::OnMouse(UINT messg, WPARAM wParam, int x, int y, COORD crMouse
 		con.bRClick4KeyBar = FALSE;
 	}
 
-	// Пропускать мышь в консоль только если буфер реальный
-	return (m_Type != rbt_Primary);
+	// Allow posting mouse event to console only for rbt_Primary buffer
+	lbSkip = (m_Type != rbt_Primary);
+wrap:
+	if (messg == con.mn_SkipNextMouseEvent)
+	{
+		con.mn_SkipNextMouseEvent = 0;
+		#ifdef _DEBUG
+		_wsprintf(szDbgInfo, SKIPCOUNT(szDbgInfo) L"Selection: %s is skipped", GetMouseMsgName(messg));
+		DEBUGSTRSEL(szDbgInfo);
+		#endif
+		lbSkip = true;
+	}
+	return lbSkip;
 }
 
 BOOL CRealBuffer::GetRBtnDrag(COORD* pcrMouse)
@@ -3656,7 +3799,9 @@ bool CRealBuffer::OnMouseSelection(UINT messg, WPARAM wParam, int x, int y)
 	COORD cr = ScreenToBuffer(crScreen);
 
 
-	if (messg == WM_LBUTTONDOWN)
+	if ((messg == WM_LBUTTONDOWN)
+		|| ((messg == WM_LBUTTONDBLCLK) && (con.m_sel.dwFlags & (CONSOLE_TEXT_SELECTION|CONSOLE_BLOCK_SELECTION)) && (con.m_sel.dwFlags & CONSOLE_DBLCLICK_SELECTION))
+		)
 	{
 		BOOL lbStreamSelection = FALSE;
 		BYTE vkMod = 0; // Если удерживается модификатор - его нужно "отпустить" в консоль
@@ -3692,6 +3837,13 @@ bool CRealBuffer::OnMouseSelection(UINT messg, WPARAM wParam, int x, int y)
 			crTo.X = GetBufferWidth()-1;
 		}
 
+		#ifdef _DEBUG
+		wchar_t szLog[200]; _wsprintf(szLog, SKIPCOUNT(szLog) L"Selection: %s %s",
+			(messg == WM_LBUTTONDOWN) ? L"WM_LBUTTONDOWN" : L"WM_LBUTTONDBLCLK",
+			bTripleClick ? L"bTripleClick" : L"");
+		DEBUGSTRSEL(szLog);
+		#endif
+
 		// Если дошли сюда - значит или модификатор нажат, или из меню выделение запустили
 		StartSelection(lbStreamSelection, cr.X, cr.Y, TRUE, bTripleClick ? WM_LBUTTONDBLCLK : WM_LBUTTONDOWN, bTripleClick ? &crTo : NULL);
 
@@ -3703,6 +3855,8 @@ bool CRealBuffer::OnMouseSelection(UINT messg, WPARAM wParam, int x, int y)
 	{
 		// Выделить слово под курсором (как в обычной консоли)
 		BOOL lbStreamSelection = (con.m_sel.dwFlags & CONSOLE_TEXT_SELECTION) == CONSOLE_TEXT_SELECTION;
+
+		DEBUGSTRSEL(L"Selection: WM_LBUTTONDBLCLK - expanding etr_Word");
 
 		// Нужно получить координаты слова
 		COORD crFrom = cr, crTo = cr;
@@ -3775,10 +3929,11 @@ bool CRealBuffer::OnMouseSelection(UINT messg, WPARAM wParam, int x, int y)
 				DWORD nPrevTick = (con.m_sel.dwFlags & CONSOLE_DBLCLICK_SELECTION) ? con.m_SelDblClickTick : con.m_SelClickTick;
 				if ((GetTickCount() - nPrevTick) > GetDoubleClickTime())
 				{
-					// Если длительность удержания кнопки мышки превышает DblClickTime
-					// то можно (и нужно) сразу выполнить копирование
+					// If duration of dragging/marking with mouse key pressed
+					// exceeds DblClickTime we may (and must) do copy immediately
 					_ASSERTE(nPrevTick!=0);
-					DoSelectionFinalize(true);
+					_ASSERTE(gpSet->isCTSAutoCopy && mp_RCon && mp_RCon->isSelectionPresent());
+					mp_RCon->AutoCopyTimer();
 				}
 				else
 				{
@@ -3795,13 +3950,31 @@ bool CRealBuffer::OnMouseSelection(UINT messg, WPARAM wParam, int x, int y)
 	{
 		BYTE bAction = (messg == WM_RBUTTONUP) ? gpSet->isCTSRBtnAction : gpSet->isCTSMBtnAction; // enum: 0-off, 1-copy, 2-paste, 3-auto
 
+		// On mouse selection, when LBtn is still down, and RBtn is clicked - Do "Internal Copy & Paste"
+
 		bool bDoCopyWin = (bAction == 1);
-		bool bDoPaste = (bAction == 3);
-		bool bDoCopy = bDoCopyWin || bDoPaste;
+		bool bDoPaste = false;
+
+		if (bAction == 3)
+		{
+			if ((con.m_sel.dwFlags & CONSOLE_MOUSE_DOWN))
+			{
+				// LBtn is pressed now
+				bDoPaste = true;
+			}
+			else if (gpSet->isCTSIntelligent && isMouseInsideSelection(x, y))
+			{
+				// If LBtn was released, but RBtn was pressed **over** selection
+				// That allows DblClick on file and RClick on it to paste selection into CmdLine
+				bDoPaste = true;
+			}
+		}
+
 
 		if (!bDoPaste)
 		{
 			// While "Paste" was not requested - that means "Copy to Windows clipboard"
+			bool bDoCopy = bDoCopyWin || bDoPaste || (bAction == 3);
 			DoSelectionFinalize(bDoCopy);
 		}
 		else
@@ -4066,7 +4239,7 @@ done:
 	}
 	else
 	{
-		con.m_sel.dwFlags = CONSOLE_SELECTION_IN_PROGRESS | CONSOLE_TEXT_SELECTION;
+		con.m_sel.dwFlags = CONSOLE_SELECTION_IN_PROGRESS | CONSOLE_TEXT_SELECTION | CONSOLE_LEFT_ANCHOR;
 		COORD crStartBuf = ScreenToBuffer(crStart);
 		COORD crEndBuf = ScreenToBuffer(crEnd);
 		con.m_sel.dwSelectionAnchor = crStartBuf;
@@ -4079,9 +4252,10 @@ done:
 	UpdateSelection();
 }
 
-void CRealBuffer::StartSelection(BOOL abTextMode, SHORT anX/*=-1*/, SHORT anY/*=-1*/, BOOL abByMouse/*=FALSE*/, UINT anFromMsg/*=0*/, COORD *pcrTo/*=NULL*/)
+void CRealBuffer::StartSelection(BOOL abTextMode, SHORT anX/*=-1*/, SHORT anY/*=-1*/, BOOL abByMouse/*=FALSE*/, UINT anFromMsg/*=0*/, COORD *pcrTo/*=NULL*/, DWORD anAnchorFlag/*=0*/)
 {
 	_ASSERTE(anY==-1 || anY>=GetBufferPosY());
+	_ASSERTE(anAnchorFlag==0 || anAnchorFlag==CONSOLE_LEFT_ANCHOR || anAnchorFlag==CONSOLE_RIGHT_ANCHOR);
 
 	// Если начинается выделение - запретить фару начинать драг, а то подеремся
 	if (abByMouse)
@@ -4104,7 +4278,7 @@ void CRealBuffer::StartSelection(BOOL abTextMode, SHORT anX/*=-1*/, SHORT anY/*=
 				_ASSERTE(mp_RCon->mp_ABuf->m_Type==rbt_Alternative);
 				mp_RCon->mp_ABuf->m_Type = rbt_Selection; // Изменить, чтобы по завершении выделения - буфер закрыть
 
-				mp_RCon->mp_ABuf->StartSelection(abTextMode, anX, anY, abByMouse, anFromMsg);
+				mp_RCon->mp_ABuf->StartSelection(abTextMode, anX, anY, abByMouse, anFromMsg, NULL, anAnchorFlag);
 				return;
 			}
 		}
@@ -4162,13 +4336,14 @@ void CRealBuffer::StartSelection(BOOL abTextMode, SHORT anX/*=-1*/, SHORT anY/*=
 	con.m_sel.dwFlags = CONSOLE_SELECTION_IN_PROGRESS
 	                    | (abByMouse ? (CONSOLE_MOUSE_SELECTION|CONSOLE_MOUSE_DOWN) : 0)
 	                    | (abTextMode ? CONSOLE_TEXT_SELECTION : CONSOLE_BLOCK_SELECTION)
+						| (anAnchorFlag & (CONSOLE_LEFT_ANCHOR|CONSOLE_RIGHT_ANCHOR))
 						| (abByMouse ? vkMod : 0);
 	con.m_sel.dwSelectionAnchor = cr;
 	con.m_sel.srSelection.Left = con.m_sel.srSelection.Right = cr.X;
 	con.m_sel.srSelection.Top = con.m_sel.srSelection.Bottom = cr.Y;
 	_ASSERTE(cr.Y>=GetBufferPosY() && cr.Y<GetBufferHeight());
 
-	UpdateSelection();
+	con.mn_UpdateSelectionCalled = 0;
 
 	if ((anFromMsg == WM_LBUTTONDBLCLK) || (pcrTo && (con.m_sel.dwFlags & CONSOLE_DBLCLICK_SELECTION)))
 	{
@@ -4194,6 +4369,165 @@ void CRealBuffer::StartSelection(BOOL abTextMode, SHORT anX/*=-1*/, SHORT anY/*=
 			mp_RCon->VCon()->SetAutoCopyTimer(true);
 		}
 	}
+
+	// Refresh on-screen and status
+	if (!con.mn_UpdateSelectionCalled)
+	{
+		UpdateSelection();
+	}
+}
+
+void CRealBuffer::ChangeSelectionByKey(UINT vkKey, bool bCtrl, bool bShift)
+{
+	COORD cr; ConsoleCursorPos(&cr);
+	COORD crPromptBegin = {};
+
+	// -- координаты нужны абсолютные
+	//// Поправить
+	//cr.Y -= con.nTopVisibleLine;
+
+	bool bJump = bCtrl;
+	short iDiff = 1;
+
+	switch (vkKey)
+	{
+	case VK_LEFT:
+	case VK_RIGHT:
+	{
+		ExpandTextRangeType etr;
+		bool bLeftward = (vkKey == VK_LEFT);
+		if (bLeftward)
+			cr.X = max(0, (cr.X - iDiff));
+		else
+			cr.X = min((GetBufferWidth() - 1), (cr.X + iDiff));
+		// If `Ctrl` is pressed - jump `by word`
+		if (bJump
+			&& ((bLeftward && (cr.X > 1))
+				|| (!bLeftward && ((cr.X + 1) < GetBufferWidth()))
+				))
+		{
+			COORD crFrom = cr;
+			COORD crTo = crFrom;
+			// Either by `word`
+			if ((etr = ExpandTextRange(crFrom, crTo, etr_Word)) != etr_None)
+			{
+				COORD& crNew = (bLeftward ? crFrom : crTo);
+				if (crNew.X != cr.X)
+					cr = crNew;
+				else
+					etr = etr_None;
+			}
+			// or by 10 chars (we add/sub 9 more chars)
+			if (etr == etr_None)
+			{
+				if (bLeftward)
+					cr.X = max(0, (cr.X - 9));
+				else
+					cr.X = min((GetBufferWidth() - 1), (cr.X + 9));
+			}
+		}
+		// Do pos change
+		break;
+	}
+	case VK_UP:
+	{
+		// Half screen if Ctrl is pressed
+		if (bJump)
+			iDiff = (GetWindowHeight() >> 1);
+		cr.Y = max(0, (cr.Y - iDiff));
+		break;
+	}
+	case VK_DOWN:
+	{
+		// Half screen if Ctrl is pressed
+		if (bJump)
+			iDiff = (GetWindowHeight() >> 1);
+		cr.Y = min((GetBufferHeight() - 1), (cr.Y + iDiff));
+		break;
+	}
+	case VK_HOME:
+	{
+		// Extend to prompt starting position first
+		SHORT X = 0;
+		if (mp_RCon->QueryPromptStart(&crPromptBegin)
+			&& (cr.Y == crPromptBegin.Y))
+		{
+			if (cr.X > crPromptBegin.X)
+				X = crPromptBegin.X;
+			else if (cr.X == 0)
+				X = crPromptBegin.X;
+		}
+		cr.X = X;
+		break;
+	}
+	case VK_END:
+	{
+		//TODO: Extend to text line ending first
+		SHORT X = (GetBufferWidth() - 1);
+		wchar_t* pszLine = NULL; int nLineLen = 0;
+		COORD lcrScr = BufferToScreen(cr);
+		// Find last non-spacing character
+		MSectionLock csData; csData.Lock(&csCON);
+		if (GetConsoleLine(lcrScr.Y, &pszLine, &nLineLen, &csData))
+		{
+			SHORT newX = X;
+			while ((newX > 0) && (pszLine[newX] == 0 || pszLine[newX] == L' ' || pszLine[newX] == L'\t'))
+				newX--;
+			_ASSERTE(con.m_sel.dwFlags!=0);
+			if (newX > cr.X)
+			{
+				X = newX;
+			}
+			else if (cr.X == X)
+			{
+				if (((cr.Y != con.m_sel.srSelection.Top) || ((newX+1) != con.m_sel.srSelection.Left))
+					&& ((cr.Y != con.m_sel.srSelection.Bottom) || ((newX+1) != con.m_sel.srSelection.Right)))
+				{
+					X = newX;
+				}
+			}
+		}
+		cr.X = X;
+		break;
+	}
+	}
+
+	// What shall we do?
+	bool bResetSel = !bShift;
+	if (bResetSel)
+	{
+		// If `Shift` key was released, we reset selection to new position
+		bool lbStreamSelection = (con.m_sel.dwFlags & (CONSOLE_TEXT_SELECTION)) == CONSOLE_TEXT_SELECTION;
+		StartSelection(lbStreamSelection, cr.X, cr.Y);
+	}
+	else
+	{
+		// `Shift` is holded, extend selection range
+		ExpandSelection(cr.X, cr.Y, true);
+	}
+}
+
+UINT CRealBuffer::CorrectSelectionAnchor()
+{
+	// Active selection is expected here
+	if (!con.m_sel.dwFlags)
+	{
+		_ASSERTE(con.m_sel.dwFlags!=0);
+		return 0;
+	}
+	// If selection is greater than one char
+	if ((con.m_sel.srSelection.Top < con.m_sel.srSelection.Bottom)
+		|| (con.m_sel.srSelection.Left < con.m_sel.srSelection.Right))
+	{
+		if ((con.m_sel.srSelection.Top == con.m_sel.dwSelectionAnchor.Y)
+			&& (con.m_sel.srSelection.Left == con.m_sel.dwSelectionAnchor.X))
+			con.m_sel.dwFlags = (con.m_sel.dwFlags & ~(CONSOLE_LEFT_ANCHOR|CONSOLE_RIGHT_ANCHOR)) | CONSOLE_LEFT_ANCHOR;
+		else if ((con.m_sel.srSelection.Bottom == con.m_sel.dwSelectionAnchor.Y)
+			&& (con.m_sel.srSelection.Right == con.m_sel.dwSelectionAnchor.X))
+			con.m_sel.dwFlags = (con.m_sel.dwFlags & ~(CONSOLE_LEFT_ANCHOR|CONSOLE_RIGHT_ANCHOR)) | CONSOLE_RIGHT_ANCHOR;
+	}
+	// Result
+	return (con.m_sel.dwFlags & (CONSOLE_LEFT_ANCHOR|CONSOLE_RIGHT_ANCHOR));
 }
 
 void CRealBuffer::ExpandSelection(SHORT anX, SHORT anY, bool bWasSelection)
@@ -4224,6 +4558,7 @@ void CRealBuffer::ExpandSelection(SHORT anX, SHORT anY, bool bWasSelection)
 	}
 
 	BOOL lbStreamSelection = (con.m_sel.dwFlags & (CONSOLE_TEXT_SELECTION)) == CONSOLE_TEXT_SELECTION;
+	DWORD nAnchorFlags = CorrectSelectionAnchor();
 
 	if (!lbStreamSelection)
 	{
@@ -4240,14 +4575,38 @@ void CRealBuffer::ExpandSelection(SHORT anX, SHORT anY, bool bWasSelection)
 	}
 	else
 	{
-		if ((cr.Y > con.m_sel.dwSelectionAnchor.Y)
-		        || ((cr.Y == con.m_sel.dwSelectionAnchor.Y) && (cr.X > con.m_sel.dwSelectionAnchor.X)))
+		COORD anchor = con.m_sel.dwSelectionAnchor;
+		// Switch Left/Right members
+		if ((cr.Y > anchor.Y)
+		        || ((cr.Y == anchor.Y) && (cr.X > anchor.X)))
 		{
+			// Extending selection rightward
+			if (con.m_sel.dwFlags & CONSOLE_RIGHT_ANCHOR)
+			{
+				// Is was leftward selection
+				if (((anchor.X + 1) < TextWidth()) && (cr.X >= anchor.X))
+				{
+					con.m_sel.dwSelectionAnchor.X++;
+					cr.X = klMax(cr.X, con.m_sel.dwSelectionAnchor.X);
+					con.m_sel.dwFlags = (con.m_sel.dwFlags & ~CONSOLE_RIGHT_ANCHOR) | CONSOLE_LEFT_ANCHOR;
+				}
+			}
 			con.m_sel.srSelection.Left = con.m_sel.dwSelectionAnchor.X;
 			con.m_sel.srSelection.Right = cr.X;
 		}
 		else
 		{
+			// Extending selection leftward
+			if (con.m_sel.dwFlags & CONSOLE_LEFT_ANCHOR)
+			{
+				// Is was rightward selection
+				if (((anchor.X - 1) > 0) && (cr.X <= anchor.X))
+				{
+					con.m_sel.dwSelectionAnchor.X--;
+					cr.X = klMin(cr.X, con.m_sel.dwSelectionAnchor.X);
+					con.m_sel.dwFlags = (con.m_sel.dwFlags & ~CONSOLE_LEFT_ANCHOR) | CONSOLE_RIGHT_ANCHOR;
+				}
+			}
 			con.m_sel.srSelection.Left = cr.X;
 			con.m_sel.srSelection.Right = con.m_sel.dwSelectionAnchor.X;
 		}
@@ -4299,6 +4658,12 @@ bool CRealBuffer::DoSelectionCopy(CECopyMode CopyMode /*= cm_CopySel*/, BYTE nFo
 
 	RealBufferType bufType = m_Type;
 
+	bool bResetSelection = false;
+	if (con.m_sel.dwFlags & CONSOLE_MOUSE_SELECTION)
+		bResetSelection = gpSet->isCTSResetOnRelease;
+	else if (con.m_sel.dwFlags)
+		bResetSelection = gpSet->isCTSEndOnTyping;
+
 	if (!con.m_sel.dwFlags)
 	{
 		MBoxAssert(con.m_sel.dwFlags != 0);
@@ -4341,8 +4706,8 @@ bool CRealBuffer::DoSelectionCopy(CECopyMode CopyMode /*= cm_CopySel*/, BYTE nFo
 		}
 	}
 
-	// Fin, Сбрасываем
-	if (bRc)
+	// Fin, Reset selection region
+	if (bResetSelection && bRc)
 	{
 		DoSelectionStop(); // con.m_sel.dwFlags = 0;
 
@@ -4888,12 +5253,22 @@ int CRealBuffer::GetSelectionCellsCount()
 // обновить на экране
 void CRealBuffer::UpdateSelection()
 {
+	InterlockedIncrement(&con.mn_UpdateSelectionCalled);
+
 	// Show current selection state in the Status bar
 	mp_RCon->OnSelectionChanged();
 
 	TODO("Это корректно? Нужно обновить VCon");
 	con.bConsoleDataChanged = TRUE; // А эта - при вызовах из CVirtualConsole
 	//mp_RCon->mp_VCon->Update(true); -- Update() и так вызывается в PaintVConNormal
+	mp_RCon->mp_VCon->Redraw(true);
+}
+
+void CRealBuffer::UpdateHyperlink()
+{
+	DEBUGSTRLINK(con.etr.etrLast ? L"Highligting hyperlink" : L"Drop hyperlink highlighting");
+	con.etrWasChanged = false;
+	con.bConsoleDataChanged = TRUE;
 	mp_RCon->mp_VCon->Redraw(true);
 }
 
@@ -4932,6 +5307,8 @@ bool CRealBuffer::DoSelectionFinalize(bool abCopy, CECopyMode CopyMode, WPARAM w
 	}
 
 	mp_RCon->mn_SelectModeSkipVk = wParam;
+
+	// Spare if abCopy is true
 	DoSelectionStop(); // con.m_sel.dwFlags = 0;
 
 	if (m_Type == rbt_Selection)
@@ -4966,6 +5343,60 @@ const ConEmuHotKey* CRealBuffer::ProcessSelectionHotKey(const ConEmuChord& VkSta
 		return ConEmuSkipHotKey;
 	}
 
+	// Del/Shift-Del/BS/Ctrl-X - try to "edit" prompt
+	bool bDel = false, bShiftDel = false, bBS = false, bCtrlX = false;
+	if (gpSet->isCTSEraseBeforeReset &&
+		((bDel = VkState.IsEqual(VK_DELETE, cvk_Naked))
+		|| (bShiftDel = VkState.IsEqual(VK_DELETE, cvk_Shift))
+		|| (bCtrlX = VkState.IsEqual('X', cvk_Ctrl))
+		|| (bBS = VkState.IsEqual(VK_BACK, cvk_Naked)))
+		)
+	{
+		bool bCopyBeforeErase = (bShiftDel || bCtrlX);
+		CONSOLE_SELECTION_INFO sel = con.m_sel;
+		COORD cur = con.m_sbi.dwCursorPosition;
+		COORD anch = sel.dwSelectionAnchor;
+		if (bKeyDown
+			// If this was one-line selection
+			&& (sel.srSelection.Top == sel.srSelection.Bottom)
+			// And cursor position matches anchor position
+			&& (cur.Y == anch.Y)
+			&& (((cur.X == anch.X) && (anch.X == sel.srSelection.Left) && (sel.srSelection.Right >= cur.X))
+				|| ((cur.X == (anch.X+1)) && (anch.X == sel.srSelection.Right) && (sel.srSelection.Left <= cur.X))
+				)
+			)
+		{
+			DoSelectionFinalize(bCopyBeforeErase, cm_CopySel, VkState.Vk);
+			// Now post sequence of keys
+			UINT vkPostKey = 0; LPCWSTR pszKey = NULL;
+			if ((anch.X == sel.srSelection.Left) && (cur.X == anch.X)
+				&& (sel.srSelection.Right >= sel.srSelection.Left))
+			{
+				vkPostKey = VK_DELETE; pszKey = L"Delete";
+			}
+			else if ((anch.X == sel.srSelection.Right)
+				&& (sel.srSelection.Right >= sel.srSelection.Left))
+			{
+				vkPostKey = VK_BACK; pszKey = L"Backspace";
+			}
+			if (vkPostKey)
+			{
+				int iScanCode = 0; DWORD dwControlState = 0;
+				UINT VK = ConEmuHotKey::GetVkByKeyName(pszKey, &iScanCode, &dwControlState);
+				INPUT_RECORD r[2] = { { KEY_EVENT },{ KEY_EVENT } };
+				TranslateKeyPress(VK, dwControlState, (VK == VK_BACK) ? (wchar_t)VK_BACK : 0, iScanCode, r, r + 1);
+
+				bool lbPress = false;
+				r[0].Event.KeyEvent.wRepeatCount = (sel.srSelection.Right - sel.srSelection.Left + 1);
+				if (r[0].Event.KeyEvent.wRepeatCount <= GetTextWidth())
+					lbPress = mp_RCon->PostConsoleEvent(r);
+				if (lbPress)
+					mp_RCon->PostConsoleEvent(r + 1);
+			}
+		}
+		return ConEmuSkipHotKey;
+	}
+
 	return NULL;
 }
 
@@ -4984,102 +5415,10 @@ bool CRealBuffer::OnKeyboard(HWND hWnd, UINT messg, WPARAM wParam, LPARAM lParam
 		if ((wParam == VK_ESCAPE) || (wParam == VK_RETURN) /*|| (wParam == 'C' || wParam == VK_INSERT)*/)
 		{
 			DoSelectionFinalize(wParam != VK_ESCAPE, cm_CopySel, wParam);
-			return true;
 		}
 		else
 		{
-			COORD cr; ConsoleCursorPos(&cr);
-
-			// -- координаты нужны абсолютные
-			//// Поправить
-			//cr.Y -= con.nTopVisibleLine;
-
-			bool bJump = isPressed(VK_CONTROL);
-			short iDiff = 1;
-
-			switch (LOWORD(wParam))
-			{
-				case VK_LEFT:
-				case VK_RIGHT:
-				{
-					ExpandTextRangeType etr;
-					bool bLeftward = (LOWORD(wParam) == VK_LEFT);
-					if (bLeftward)
-						cr.X = max(0, (cr.X-iDiff));
-					else
-						cr.X = min((GetBufferWidth() - 1), (cr.X+iDiff));
-					// If `Ctrl` is pressed - jump `by word`
-					if (bJump
-						&& ((bLeftward && (cr.X > 1))
-							|| (!bLeftward && ((cr.X + 1) < GetBufferWidth()))
-						))
-					{
-						COORD crFrom = cr;
-						COORD crTo = crFrom;
-						// Either by `word`
-						if ((etr = ExpandTextRange(crFrom, crTo, etr_Word)) != etr_None)
-						{
-							COORD& crNew = (bLeftward ? crFrom : crTo);
-							if (crNew.X != cr.X)
-								cr = crNew;
-							else
-								etr = etr_None;
-						}
-						// or by 10 chars (we add/sub 9 more chars)
-						if (etr == etr_None)
-						{
-							if (bLeftward)
-								cr.X = max(0, (cr.X-9));
-							else
-								cr.X = min((GetBufferWidth() - 1), (cr.X+9));
-						}
-					}
-					// Do pos change
-					break;
-				}
-				case VK_UP:
-				{
-					// Half screen if Ctrl is pressed
-					if (bJump)
-						iDiff = (GetWindowHeight()>>1);
-					cr.Y = max(0, (cr.Y-iDiff));
-					break;
-				}
-				case VK_DOWN:
-				{
-					// Half screen if Ctrl is pressed
-					if (bJump)
-						iDiff = (GetWindowHeight()>>1);
-					cr.Y = min((GetBufferHeight()-1), (cr.Y+iDiff));
-					break;
-				}
-				case VK_HOME:
-				{
-					//TODO: Extend to prompt starting position first
-					cr.X = 0;
-					break;
-				}
-				case VK_END:
-				{
-					//TODO: Extend to text line ending first
-					cr.X = (GetBufferWidth()-1);
-					break;
-				}
-			}
-
-			// What shall we do?
-			bool bResetSel = !isPressed(VK_SHIFT);
-			if (bResetSel)
-			{
-				// If `Shift` key was released, we reset selection to new position
-				bool lbStreamSelection = (con.m_sel.dwFlags & (CONSOLE_TEXT_SELECTION)) == CONSOLE_TEXT_SELECTION;
-				StartSelection(lbStreamSelection, cr.X,cr.Y);
-			}
-			else
-			{
-				// `Shift` is holded, extend selection range
-				ExpandSelection(cr.X,cr.Y, true);
-			}
+			ChangeSelectionByKey(LODWORD(wParam), isPressed(VK_CONTROL), isPressed(VK_SHIFT));
 		}
 
 		return true;
@@ -5096,8 +5435,8 @@ bool CRealBuffer::OnKeyboard(HWND hWnd, UINT messg, WPARAM wParam, LPARAM lParam
 		{
 			if (GetLastTextRangeType() != etr_None)
 			{
-				StoreLastTextRange(etr_None);
-				UpdateSelection();
+				if (StoreLastTextRange(etr_None))
+					UpdateHyperlink();
 			}
 		}
 	}
@@ -5106,8 +5445,7 @@ bool CRealBuffer::OnKeyboard(HWND hWnd, UINT messg, WPARAM wParam, LPARAM lParam
 	{
 		if (gpSet->isFarGotoEditor && isKey(wParam, gpSet->GetHotkeyById(vkFarGotoEditorVk)))
 		{
-			if (ProcessFarHyperlink(true))
-				UpdateSelection();
+			ProcessFarHyperlink(true);
 		}
 
 		if (mp_RCon->mn_SelectModeSkipVk)
@@ -5306,6 +5644,33 @@ void CRealBuffer::PrepareColorTable(bool bExtendFonts, CharAttr (&lcaTableExt)[0
 	}
 }
 
+void CRealBuffer::ResetConData()
+{
+	con.mb_ConDataValid = false;
+}
+
+bool CRealBuffer::isConDataValid()
+{
+	if (m_Type == rbt_Primary)
+	{
+		if (!con.pConChar || !con.pConAttr)
+			return false;
+		_ASSERTE(!con.mb_ConDataValid || *con.pConChar);
+	}
+	else
+	{
+		if (!dump.pszBlock1 || !dump.pcaBlock1)
+			return false;
+	}
+
+	if (!con.mb_ConDataValid)
+	{
+		return false;
+	}
+
+	return true;
+}
+
 // nWidth и nHeight это размеры, которые хочет получить VCon (оно могло еще не среагировать на изменения?
 void CRealBuffer::GetConsoleData(wchar_t* pChar, CharAttr* pAttr, int nWidth, int nHeight, ConEmuTextRange& etr)
 {
@@ -5450,22 +5815,19 @@ void CRealBuffer::GetConsoleData(wchar_t* pChar, CharAttr* pAttr, int nWidth, in
 	}
 	else
 	{
-		if (!con.pConChar || !con.pConAttr)
+		if (!isConDataValid())
 		{
-			nYMax = nHeight; // Мусор чистить не нужно, уже полный "reset"
-
-			wmemset(pChar, wSetChar, cwDstBufSize);
-
+			// Return totally clear buffer, no need to erase "bottom"
+			nYMax = nHeight;
+			// Under debug, show "warning" char if only buffer was not initialized
+			wchar_t wc = (con.pConChar && con.pConAttr) ? L' ' : wSetChar;
+			wmemset(pChar, wc, cwDstBufSize);
+			// And Attributes
 			for (DWORD i = 0; i < cwDstBufSize; i++)
 				pAttr[i] = lcaDef;
-
-			//wmemset((wchar_t*)pAttr, wSetAttr, cbDstBufSize);
-			//} else if (nWidth == con.nTextWidth && nHeight == con.nTextHeight) {
-			//    TODO("Во время ресайза консоль может подглючивать - отдает не то что нужно...");
-			//    //_ASSERTE(*con.pConChar!=ucBoxDblVert);
-			//    memmove(pChar, con.pConChar, cbDstBufSize);
-			//    WARNING("Это заменить на for");
-			//    memmove(pAttr, con.pConAttr, cbDstBufSize);
+			// Advance pointer to the end of the buffer
+			_ASSERTE(con.nConBufCells >= ((size_t)nWidth*(size_t)nHeight + 1)); // It's expected to be ASCIIZ
+			pszDst = pChar + nWidth*nHeight;
 		}
 		else
 		{
@@ -6445,15 +6807,13 @@ bool CRealBuffer::isSelectionAllowed()
 			if (CompareProcessNames(pszCompare, L"far"))
 			{
 				// Tricky a little
-				// Editor and panels - send mouse to console
-				// Userscreen and viewer - use mouse for selection
-				// If user want to send mouse to console always - set "far.exe" instead of "far"
+				// * in Far Viewer - click&drag is used for content scrolling
+				// * in Far Editor - used for text selection
+				// * in Far Panels - used for file drag&drop (ConEmu's or Far internal)
+				// * UserScreen (panels are hidden) - use mouse for selection
+				// To send mouse to console always - set exceptions to "far.exe" instead of "far"
 				if (mp_RCon->isFar())
 				{
-					// Don't allow:
-					// in Far Viewer - click&drag is used for content scrolling
-					// in Far Editor - used for text selection
-					// in Far Panels - used for file drag&drop (ConEmu's or Far internal)
 					if (mp_RCon->isViewer() || mp_RCon->isEditor() || mp_RCon->isFilePanel(true, true))
 					{
 						return false;
@@ -6464,7 +6824,15 @@ bool CRealBuffer::isSelectionAllowed()
 						int nDialogs = m_Rgn.GetDetectedDialogs(3,NULL,NULL);
 						if ((nDialogs > 0) && !((nDialogs == 1) && (nDlgFlags == FR_MENUBAR)))
 							return false; // Any dialog on screen? Don't select
+						return true;
 					}
+				}
+				else
+				{
+					// GetActiveProcessName() may have lags due to complexity
+					// But isFar() always returns actual state
+					// So we may get here if 'Far' has just become inactive (command execution)
+					continue;
 				}
 			}
 			else if (CompareProcessNames(pszCompare, L"vim"))
@@ -6498,6 +6866,38 @@ bool CRealBuffer::isMouseSelectionPresent()
 		return false;
 
 	return ((con.m_sel.dwFlags & CONSOLE_MOUSE_SELECTION) != 0);
+}
+
+bool CRealBuffer::isMouseInsideSelection(int x, int y)
+{
+	if (!this || !isSelectionPresent())
+		return false;
+
+	COORD crScreen = mp_RCon->mp_VCon->ClientToConsole(x, y);
+	MinMax(crScreen.X, 0, TextWidth() - 1);
+	MinMax(crScreen.Y, 0, TextHeight() - 1);
+	COORD cr = ScreenToBuffer(crScreen);
+
+	bool bInside = false;
+	if (isStreamSelection())
+	{
+		// Complicated rules
+		const SMALL_RECT& sr = con.m_sel.srSelection;
+		if ((((cr.Y == sr.Top) && (cr.X >= sr.Left))
+			|| (cr.Y > sr.Top))
+			&& (((cr.Y == sr.Bottom) && (cr.X <= sr.Right))
+				|| (cr.Y < sr.Bottom))
+			)
+		{
+			bInside = true;
+		}
+	}
+	else // block selection
+	{
+		bInside = CoordInSmallRect(cr, con.m_sel.srSelection);
+	}
+
+	return bInside;
 }
 
 bool CRealBuffer::GetConsoleSelectionInfo(CONSOLE_SELECTION_INFO *sel)
@@ -6752,10 +7152,14 @@ ExpandTextRangeType CRealBuffer::ExpandTextRange(COORD& crFrom/*[In/Out]*/, COOR
 	return result;
 }
 
-void CRealBuffer::StoreLastTextRange(ExpandTextRangeType etr)
+bool CRealBuffer::StoreLastTextRange(ExpandTextRangeType etr)
 {
+	bool bChanged = false;
+
 	if (con.etr.etrLast != etr)
 	{
+		con.etrWasChanged = bChanged = true;
+
 		con.etr.etrLast = etr;
 		//if (etr == etr_None)
 		//{
@@ -6765,6 +7169,8 @@ void CRealBuffer::StoreLastTextRange(ExpandTextRangeType etr)
 		if ((mp_RCon->mp_ABuf == this) && mp_RCon->isVisible())
 			gpConEmu->OnSetCursor();
 	}
+
+	return bChanged;
 }
 
 BOOL CRealBuffer::GetPanelRect(BOOL abRight, RECT* prc, BOOL abFull /*= FALSE*/, BOOL abIncludeEdges /*= FALSE*/)

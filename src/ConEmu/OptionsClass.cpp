@@ -1922,7 +1922,7 @@ LRESULT CSettings::OnInitDialog_Taskbar(HWND hWnd2, bool abInitial)
 		(gpSet->m_isTabsOnTaskBar == 2) ? rbTaskbarBtnWin7 :
 		(gpSet->m_isTabsOnTaskBar == 1) ? rbTaskbarBtnAll
 		: rbTaskbarBtnActive);
-	checkDlgButton(hWnd2, cbTaskbarShield, gpSet->isTaskbarShield);
+	checkDlgButton(hWnd2, cbTaskbarOverlay, gpSet->isTaskbarOverlay);
 	checkDlgButton(hWnd2, cbTaskbarProgress, gpSet->isTaskbarProgress);
 
 	//checkRadioButton(hWnd2, rbMultiLastClose, rbMultiLastTSA,
@@ -2374,11 +2374,19 @@ LRESULT CSettings::OnInitDialog_MarkCopy(HWND hWnd2, bool abInitial)
 	SafeFree(pszExcept);
 
 	checkDlgButton(hWnd2, cbCTSAutoCopy, gpSet->isCTSAutoCopy);
+	checkDlgButton(hWnd2, cbCTSResetOnRelease, (gpSet->isCTSResetOnRelease && gpSet->isCTSAutoCopy));
+	EnableDlgItem(hWnd2, cbCTSResetOnRelease, gpSet->isCTSAutoCopy);
+
 	checkDlgButton(hWnd2, cbCTSIBeam, gpSet->isCTSIBeam);
+
 	checkDlgButton(hWnd2, cbCTSEndOnTyping, (gpSet->isCTSEndOnTyping != 0));
 	checkDlgButton(hWnd2, cbCTSEndOnKeyPress, (gpSet->isCTSEndOnTyping != 0) && gpSet->isCTSEndOnKeyPress);
 	checkDlgButton(hWnd2, cbCTSEndCopyBefore, (gpSet->isCTSEndOnTyping == 1));
-	EnableWindow(GetDlgItem(hWnd2, cbCTSEndOnKeyPress), gpSet->isCTSEndOnTyping!=0);
+	checkDlgButton(hWnd2, cbCTSEraseBeforeReset, gpSet->isCTSEraseBeforeReset);
+	EnableDlgItem(hWnd2, cbCTSEndOnKeyPress, gpSet->isCTSEndOnTyping!=0);
+	EnableDlgItem(hWnd2, cbCTSEndCopyBefore, gpSet->isCTSEndOnTyping!=0);
+	EnableDlgItem(hWnd2, cbCTSEraseBeforeReset, gpSet->isCTSEndOnTyping!=0);
+
 	checkDlgButton(hWnd2, cbCTSFreezeBeforeSelect, gpSet->isCTSFreezeBeforeSelect);
 	checkDlgButton(hWnd2, cbCTSBlockSelection, gpSet->isCTSSelectBlock);
 	UINT VkMod = gpSet->GetHotkeyById(vkCTSVkBlock);
@@ -3075,11 +3083,11 @@ void CSettings::setHotkeyCheckbox(HWND hDlg, WORD nCtrlId, int iHotkeyId, LPCWST
 			}
 		}
 
-		CEStr lsText = GetDlgItemTextPtr(hDlg, nCtrlId);
+		CEStr lsText(GetDlgItemTextPtr(hDlg, nCtrlId));
 		LPCWSTR pszTail = lsText.IsEmpty() ? NULL : wcsstr(lsText, L" - ");
 		if (pszTail)
 		{
-			CEStr lsNew = lstrmerge(szKeyFull, pszTail);
+			CEStr lsNew(szKeyFull, pszTail);
 			SetDlgItemText(hDlg, nCtrlId, lsNew);
 		}
 
@@ -3502,7 +3510,7 @@ LRESULT CSettings::OnInitDialog_Tasks(HWND hWnd2, bool abForceReload)
 		wcscpy_c(szKey, gsNoHotkey);
 	else
 		pDefCmdKey->GetHotkeyName(szKey, true);
-	CEStr lsLabel(lstrmerge(L"Default shell (", szKey, L")"));
+	CEStr lsLabel(L"Default shell (", szKey, L")");
 	SetDlgItemText(hWnd2, cbCmdGrpDefaultCmd, lsLabel);
 
 	// Not implemented yet
@@ -9454,7 +9462,7 @@ void CSettings::RecreateFont(WORD wFromID)
 		ShowFontErrorTip(gpSetCls->szFontError);
 	}
 
-	if (gpConEmu->mn_StartupFinished == CConEmuMain::ss_Started)
+	if (gpConEmu->mn_StartupFinished >= CConEmuMain::ss_Started)
 	{
 		gpConEmu->OnPanelViewSettingsChanged(TRUE);
 	}

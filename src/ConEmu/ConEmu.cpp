@@ -119,10 +119,10 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define DEBUGSTRMSG(h,m,w,l) //DebugLogMessage(h, m, w, l, -1, FALSE)
 #define DEBUGSTRMSG2(s) //DEBUGSTR(s)
 #define DEBUGSTRANIMATE(s) //DEBUGSTR(s)
-#define DEBUGSTRFOCUS(s) DEBUGSTR(s)
+#define DEBUGSTRFOCUS(s) //DEBUGSTR(s)
 #define DEBUGSTRSESS(s) DEBUGSTR(s)
 #define DEBUGSTRDPI(s) DEBUGSTR(s)
-#define DEBUGSTRNOLOG(s) DEBUGSTR(s)
+#define DEBUGSTRNOLOG(s) //DEBUGSTR(s)
 #define DEBUGSTRDESTROY(s) DEBUGSTR(s)
 #ifdef _DEBUG
 //#define DEBUGSHOWFOCUS(s) DEBUGSTR(s)
@@ -428,9 +428,10 @@ CConEmuMain::CConEmuMain()
 	mb_AllowAutoChildFocus = false;
 	mb_ScClosePending = false;
 	mb_UpdateJumpListOnStartup = false;
-	mn_AdmShieldTimerCounter = 0;
+	mn_TBOverlayTimerCounter = 0;
 
 	mps_IconPath = NULL;
+	mh_TaskbarIcon = NULL;
 	mp_PushInfo = NULL;
 
 	#ifdef __GNUC__
@@ -803,7 +804,7 @@ void LogFocusInfo(LPCWSTR asInfo, int Level/*=1*/)
 
 	if (Level <= gpSetCls->isAdvLogging)
 	{
-		CEStr lsMsg = lstrmerge(asInfo, szStyles);
+		CEStr lsMsg(asInfo, szStyles);
 		gpConEmu->LogString(lsMsg, TRUE);
 	}
 
@@ -820,7 +821,7 @@ void CConEmuMain::SetAppID(LPCWSTR asExtraArgs)
 {
 	BYTE md5ok = 0;
 	wchar_t szID[40] = L"";
-	CEStr lsFull = lstrmerge(ms_ConEmuExeDir, asExtraArgs);
+	CEStr lsFull(ms_ConEmuExeDir, asExtraArgs);
 
 	if (!lsFull.IsEmpty())
 	{
@@ -830,7 +831,7 @@ void CConEmuMain::SetAppID(LPCWSTR asExtraArgs)
 
 		if (gpSetCls->isAdvLogging)
 		{
-			CEStr lsLog = lstrmerge(L"Creating AppID from data: `", pszData, L"`");
+			CEStr lsLog(L"Creating AppID from data: `", pszData, L"`");
 			LogString(lsLog);
 		}
 
@@ -867,7 +868,7 @@ void CConEmuMain::SetAppID(LPCWSTR asExtraArgs)
 
 	if (gpSetCls->isAdvLogging)
 	{
-		CEStr lsLog = lstrmerge(L"New AppID: ", ms_AppID);
+		CEStr lsLog(L"New AppID: ", ms_AppID);
 		LogString(lsLog);
 	}
 }
@@ -1169,9 +1170,19 @@ bool CConEmuMain::SetConfigFile(LPCWSTR asFilePath, bool abWriteReq /*= false*/,
 	LPCWSTR pszExt = asFilePath ? PointToExt(asFilePath) : NULL;
 	int nLen = asFilePath ? lstrlen(asFilePath) : 0;
 
+	if (!asFilePath || !*asFilePath)
+	{
+		DisplayLastError(L"Empty file path specified in CConEmuMain::SetConfigFile", -1);
+		return false;
+	}
+
 	if (!asFilePath || !*asFilePath || !pszExt || !*pszExt || (nLen > MAX_PATH))
 	{
-		DisplayLastError(L"Invalid file path specified in CConEmuMain::SetConfigFile", -1);
+		CEStr lsMsg(
+			L"Invalid file path specified in CConEmuMain::SetConfigFile",
+			L"\n", L"asFilePath=`", asFilePath, L"`",
+			L"\n", L"Only *.xml files are allowed");
+		DisplayLastError(lsMsg, -1);
 		return false;
 	}
 
@@ -2320,26 +2331,46 @@ void CConEmuMain::UpdateGuiInfoMapping()
 
 }
 
-/** static **/
-bool CConEmuMain::UpdateGuiInfoMappingFill(CVirtualConsole* pVCon, LPARAM lParam)
-{
-	int* pnCount = (int*)lParam;
-	gpConEmu->m_GuiInfo.hActiveCons[*pnCount] = pVCon->RCon()->ConWnd();
-	(*pnCount)++;
-	return true;
-}
-
 void CConEmuMain::UpdateGuiInfoMappingActive(bool bActive, bool bUpdatePtr /*= true*/)
 {
 	SetConEmuFlags(m_GuiInfo.Flags,CECF_SleepInBackg,(gpSet->isSleepInBackground ? CECF_SleepInBackg : 0));
+	SetConEmuFlags(m_GuiInfo.Flags,CECF_RetardNAPanes,(gpSet->isRetardInactivePanes ? CECF_RetardNAPanes : 0));
 
 	m_GuiInfo.bGuiActive = bActive;
 
-	int nActiveCount = 0;
-	CVConGroup::EnumVCon(gpSet->isRetardInactivePanes ? evf_Active : evf_Visible, UpdateGuiInfoMappingFill, (LPARAM)&nActiveCount);
-	for (int i = nActiveCount; i < countof(m_GuiInfo.hActiveCons); i++)
-		m_GuiInfo.hActiveCons[i] = NULL;
 
+	// *** ConEmuGuiMapping::Consoles - begin
+	{
+		struct FillConsoles
+		{
+			ConEmuGuiMapping* pGuiInfo;
+			int nCount;
+
+			static bool Fill(CVirtualConsole* pVCon, LPARAM lParam)
+			{
+				FillConsoles* p = (FillConsoles*)lParam;
+				ConEmuConsoleInfo& ci = p->pGuiInfo->Consoles[p->nCount++];
+				CRealConsole* pRCon = pVCon->RCon();
+				ci.Console = pRCon->ConWnd();
+				ci.DCWindow = pVCon->GetView();
+				ci.ChildGui = pVCon->GuiWnd();
+				ci.Flags = (pVCon->isActive(false) ? ccf_Active : ccf_None)
+					| (pVCon->isVisible() ? ccf_Visible : ccf_None)
+					| (ci.ChildGui ? ccf_ChildGui : ccf_None);
+				ci.ServerPID = pRCon->GetServerPID(true);
+				return true;
+			}
+		} fill = { &m_GuiInfo, 0};
+
+		CVConGroup::EnumVCon(evf_All, FillConsoles::Fill, (LPARAM)&fill);
+
+		if (fill.nCount < countof(m_GuiInfo.Consoles))
+			memset(m_GuiInfo.Consoles + fill.nCount, 0, sizeof(m_GuiInfo.Consoles[0])*(countof(m_GuiInfo.Consoles) - fill.nCount));
+	}
+	// *** ConEmuGuiMapping::Consoles - end
+
+
+	// Update finished
 	m_GuiInfo.dwActiveTick = GetTickCount();
 
 	if (!bUpdatePtr)
@@ -2349,13 +2380,13 @@ void CConEmuMain::UpdateGuiInfoMappingActive(bool bActive, bool bUpdatePtr /*= t
 
 	if (pData)
 	{
-		if ((((pData->Flags & CECF_SleepInBackg)!=0) != (gpSet->isSleepInBackground != FALSE))
+		if ((pData->Flags != m_GuiInfo.Flags)
 			|| ((pData->bGuiActive!=FALSE) != (bActive!=FALSE))
-			|| (memcmp(pData->hActiveCons, m_GuiInfo.hActiveCons, sizeof(m_GuiInfo.hActiveCons)) != 0))
+			|| (memcmp(pData->Consoles, m_GuiInfo.Consoles, sizeof(m_GuiInfo.Consoles)) != 0))
 		{
-			SetConEmuFlags(pData->Flags,CECF_SleepInBackg,(gpSet->isSleepInBackground ? CECF_SleepInBackg : 0));
+			pData->Flags = m_GuiInfo.Flags;
 			pData->bGuiActive = bActive;
-			memmove(pData->hActiveCons, m_GuiInfo.hActiveCons, sizeof(m_GuiInfo.hActiveCons));
+			memmove(pData->Consoles, m_GuiInfo.Consoles, sizeof(m_GuiInfo.Consoles));
 			pData->dwActiveTick = m_GuiInfo.dwActiveTick;
 		}
 	}
@@ -2517,6 +2548,11 @@ CConEmuMain::~CConEmuMain()
 	//Delete Critical Section(&mcs_ShellExecuteEx);
 
 	LoadImageFinalize();
+
+	if (wasTerminateThreadCalled())
+	{
+		LogString(L"WARNING!!! TerminateThread was called, process would be terminated forcedly");
+	}
 
 	SafeDelete(mp_Log);
 	SafeDelete(mpcs_Log);
@@ -3549,10 +3585,45 @@ void CConEmuMain::ExecPostGuiMacro()
 	}
 }
 
+void CConEmuMain::SetTaskbarIcon(HICON ahNewIcon)
+{
+	// Change only icon on TaskBar, don't change Alt+Tab or TitleBar icons
+	#if 1
+
+	if (mh_TaskbarIcon != ahNewIcon)
+	{
+		wchar_t szLog[140] = L"";
+		_wsprintf(szLog, SKIPCOUNT(szLog) L"SetTaskbarIcon: NewIcon=x%p OldIcon=x%p", (LPVOID)ahNewIcon, (LPVOID)mh_TaskbarIcon);
+		LogString(szLog);
+
+		// mh_TaskbarIcon will be returned for WM_GETICON(ICON_SMALL|ICON_SMALL2)
+		HICON hOldIcon = klSet(mh_TaskbarIcon, ahNewIcon);
+		if (hOldIcon)
+			DestroyIcon(hOldIcon);
+
+		// Have to "force refresh" the icon on TaskBar, otherwise
+		// icon would not be updated on sequential clicks on cbTaskbarOverlay
+		SendMessage(ghWnd, WM_SETICON, ICON_SMALL, 0);
+		SendMessage(ghWnd, WM_SETICON, ICON_SMALL, (LPARAM)hClassIconSm);
+	}
+
+	#endif
+
+	// This would change window icon (TaskBar, TitleBar, Alt+Tab)
+	#if 0
+	HICON hOldIcon = (HICON)SendMessage(ghWnd, WM_SETICON, ICON_SMALL, (LPARAM)ahNewIcon);
+	if (hOldIcon && (hOldIcon != hClassIconSm))
+		DestroyIcon(hOldIcon);
+	if (mh_TaskbarIcon && (mh_TaskbarIcon != hClassIconSm) && (mh_TaskbarIcon != hOldIcon))
+		DestroyIcon(mh_TaskbarIcon);
+	mh_TaskbarIcon = ahNewIcon;
+	#endif
+}
+
 void CConEmuMain::SetWindowIcon(LPCWSTR asNewIcon)
 {
 	// Don't change TITLE BAR icon after initialization finished
-	if (mn_StartupFinished == ss_Started)
+	if (mn_StartupFinished >= ss_Started)
 		return;
 
 	if (!asNewIcon || !*asNewIcon)
@@ -4566,7 +4637,7 @@ int CConEmuMain::RunSingleInstance(HWND hConEmuWnd /*= NULL*/, LPCWSTR apszCmd /
 				if (!ptrMap)
 				{
 					_wsprintf(szLogPrefix, SKIPCOUNT(szLogPrefix) L"GuiTestMapping failed for PID=%u HWND=x%08X: ", dwPID, LODWORD(ConEmuHwnd));
-					CEStr lsLog = lstrmerge(szLogPrefix, GuiTestMapping.GetErrorText());
+					CEStr lsLog(szLogPrefix, GuiTestMapping.GetErrorText());
 					LogString(lsLog);
 					continue;
 				}
@@ -4575,7 +4646,7 @@ int CConEmuMain::RunSingleInstance(HWND hConEmuWnd /*= NULL*/, LPCWSTR apszCmd /
 					|| (lstrcmpi(ptrMap->AppID, this->ms_AppID) != 0))
 				{
 					_wsprintf(szLogPrefix, SKIPCOUNT(szLogPrefix) L"Skipped due to different AppID; PID=%u HWND=x%08X: \"", dwPID, LODWORD(ConEmuHwnd));
-					CEStr lsSkip = lstrmerge(szLogPrefix, ptrMap->AppID, L"\"; Our: \"", this->ms_AppID, L"\"");
+					CEStr lsSkip(szLogPrefix, ptrMap->AppID, L"\"; Our: \"", this->ms_AppID, L"\"");
 					LogString(lsSkip);
 					continue;
 				}
@@ -6451,7 +6522,7 @@ wchar_t* CConEmuMain::LoadConsoleBatch(LPCWSTR asSource, RConStartArgs* pArgs /*
 	wchar_t cType = IsConsoleBatchOrTask(asSource);
 	if (!cType)
 	{
-		_ASSERTE(*asSource==CmdFilePrefix || *asSource==TaskBracketLeft);
+		_ASSERTE(asSource && (*asSource==CmdFilePrefix || *asSource==TaskBracketLeft));
 		return NULL;
 	}
 
@@ -6750,7 +6821,7 @@ wchar_t* CConEmuMain::LoadConsoleBatch_Task(LPCWSTR asSource, RConStartArgs* pAr
 				LPCWSTR pszDefCmd = GetDefaultCmd();
 
 				RConStartArgs args;
-				args.aRecreate = (mn_StartupFinished == ss_Started) ? cra_EditTab : cra_CreateTab;
+				args.aRecreate = (mn_StartupFinished >= ss_Started) ? cra_EditTab : cra_CreateTab;
 				if (pszDefCmd && *pszDefCmd)
 				{
 					SafeFree(args.pszSpecialCmd);
@@ -6796,7 +6867,7 @@ bool CConEmuMain::CreateStartupConsoles()
 
 	if (isScript)
 	{
-		CEStr szDataW = lstrdup(pszCmd);
+		CEStr szDataW((LPCWSTR)pszCmd);
 
 		// "Script" is a Task represented as one string with "|||" as command delimiter
 		// Replace "|||" to "\r\n" as standard Task expects
@@ -6828,10 +6899,10 @@ bool CConEmuMain::CreateStartupConsoles()
 		// Was "/dir" specified in the app switches?
 		if (mb_ConEmuWorkDirArg)
 			args.pszStartupDir = lstrdup(ms_ConEmuWorkDir);
-		CEStr lsLog(lstrmerge(L"Creating console group using task ", pszCmd));
+		CEStr lsLog(L"Creating console group using task ", pszCmd);
 		LogString(lsLog);
 		// Here are either text file with Task contents, or just a Task name
-		CEStr szDataW = LoadConsoleBatch(pszCmd, &args);
+		CEStr szDataW(LoadConsoleBatch(pszCmd, &args));
 		if (szDataW.IsEmpty())
 		{
 			Destroy();
@@ -6858,7 +6929,7 @@ bool CConEmuMain::CreateStartupConsoles()
 			SafeFree(args.pszSpecialCmd);
 			args.pszSpecialCmd = lstrdup(GetCmd());
 
-			CEStr lsLog(lstrmerge(L"Creating console using command ", args.pszSpecialCmd));
+			CEStr lsLog(L"Creating console using command ", args.pszSpecialCmd);
 			LogString(lsLog);
 
 			if (!CreateCon(&args, TRUE))
@@ -6953,10 +7024,10 @@ void CConEmuMain::OnMainCreateFinished()
 	UNREFERENCED_PARAMETER(n);
 	OnActivateSplitChanged();
 
-	if (gpSet->isTaskbarShield && gpSet->isWindowOnTaskBar())
+	if (gpSet->isTaskbarOverlay && gpSet->isWindowOnTaskBar())
 	{
-		// Bug in Win7? Sometimes after startup "As Admin" shield was not appeared.
-		mn_AdmShieldTimerCounter = 0;
+		// Bug in Win7? Sometimes after startup ‘Overlay icon’ was not appeared.
+		mn_TBOverlayTimerCounter = 0;
 		SetKillTimer(true, TIMER_ADMSHIELD_ID, TIMER_ADMSHIELD_ELAPSE);
 	}
 
@@ -8053,8 +8124,8 @@ void CConEmuMain::OnTaskbarButtonCreated()
 	{
 		if (mb_IsUacAdmin)
 		{
-			// Bug in Win7? Sometimes after startup "As Admin" shield was not appeared.
-			mn_AdmShieldTimerCounter = 0;
+			// Bug in Win7? Sometimes after startup ‘Overlay icon’ was not appeared.
+			mn_TBOverlayTimerCounter = 0;
 			SetKillTimer(true, TIMER_ADMSHIELD_ID, TIMER_ADMSHIELD_ELAPSE);
 		}
 	}
@@ -8227,7 +8298,6 @@ UINT CConEmuMain::IsQuakeVisible()
 				_ASSERTE(nVisiblePart <= 100);
 				nVisiblePart = 100;
 			}
-			_ASSERTE(nVisiblePart >= 0);
 		}
 		else
 		{
@@ -8296,6 +8366,23 @@ void CConEmuMain::CheckNeedRepaint()
 			VCon->Redraw(true);
 		}
 	}
+}
+
+void CConEmuMain::EnterAltNumpadMode(UINT nBase)
+{
+	if (!this || !mp_AltNumpad)
+	{
+		_ASSERTE(this && mp_AltNumpad);
+		return;
+	}
+
+	if ((nBase != 0) && (nBase != 10) && (nBase != 16))
+	{
+		_ASSERTE(nBase==0 || nBase==10 || nBase==16);
+		return;
+	}
+
+	mp_AltNumpad->StartCapture(nBase, 0, true);
 }
 
 LRESULT CConEmuMain::OnKeyboard(HWND hWnd, UINT messg, WPARAM wParam, LPARAM lParam)
@@ -9932,22 +10019,7 @@ LRESULT CConEmuMain::OnMouse(HWND hWnd, UINT messg, WPARAM wParam, LPARAM lParam
 
 #ifdef _DEBUG
 	_wsprintf(szDbg, SKIPLEN(countof(szDbg)) L"GUI::Mouse %s at screen {%ix%i} x%08X%s\n",
-		(messg==WM_MOUSEMOVE) ? L"WM_MOUSEMOVE" :
-		(messg==WM_LBUTTONDOWN) ? L"WM_LBUTTONDOWN" :
-		(messg==WM_LBUTTONUP) ? L"WM_LBUTTONUP" :
-		(messg==WM_LBUTTONDBLCLK) ? L"WM_LBUTTONDBLCLK" :
-		(messg==WM_RBUTTONDOWN) ? L"WM_RBUTTONDOWN" :
-		(messg==WM_RBUTTONUP) ? L"WM_RBUTTONUP" :
-		(messg==WM_RBUTTONDBLCLK) ? L"WM_RBUTTONDBLCLK" :
-		(messg==WM_MBUTTONDOWN) ? L"WM_MBUTTONDOWN" :
-		(messg==WM_MBUTTONUP) ? L"WM_MBUTTONUP" :
-		(messg==WM_MBUTTONDBLCLK) ? L"WM_MBUTTONDBLCLK" :
-		(messg==0x020A) ? L"WM_MOUSEWHEEL" :
-		(messg==0x020B) ? L"WM_XBUTTONDOWN" :
-		(messg==0x020C) ? L"WM_XBUTTONUP" :
-		(messg==0x020D) ? L"WM_XBUTTONDBLCLK" :
-		(messg==0x020E) ? L"WM_MOUSEHWHEEL" :
-		L"UnknownMsg",
+		GetMouseMsgName(messg),
 		ptCurScreen.x,ptCurScreen.y,(DWORD)wParam,
 		bContinue ? L"" : L" - SKIPPED!");
 	DEBUGSTRMOUSE(szDbg);
@@ -12238,16 +12310,16 @@ void CConEmuMain::OnTimer_RClickPaint()
 	RightClickingPaint(NULL, NULL);
 }
 
-// Bug in Win7? Sometimes after startup "As Admin" shield was not appeared.
+// Bug in Win7? Sometimes after startup ‘Overlay icon’ was not appeared.
 void CConEmuMain::OnTimer_AdmShield()
 {
-	if (gpSet->isTaskbarShield)
+	if (gpSet->isTaskbarOverlay)
 	{
 		LogString(L"Calling Taskbar_UpdateOverlay from timer");
 		Taskbar_UpdateOverlay();
-		mn_AdmShieldTimerCounter++;
+		mn_TBOverlayTimerCounter++;
 	}
-	if ((mn_AdmShieldTimerCounter >= 5) || !gpSet->isTaskbarShield)
+	if ((mn_TBOverlayTimerCounter >= 5) || !gpSet->isTaskbarOverlay)
 	{
 		SetKillTimer(false, TIMER_ADMSHIELD_ID, 0);
 		LogString(L"Timer for Taskbar_UpdateOverlay was stopped");
@@ -13460,38 +13532,36 @@ LRESULT CConEmuMain::WndProc(HWND hWnd, UINT messg, WPARAM wParam, LPARAM lParam
 		case WM_IME_STARTCOMPOSITION:
 			result = this->OnKeyboardIme(hWnd, messg, wParam, lParam);
 			break;
+
 		case WM_INPUTLANGCHANGE:
 		case WM_INPUTLANGCHANGEREQUEST:
-
 			if (hWnd == ghWnd)
 				result = this->OnLangChange(messg, wParam, lParam);
 			else
-				break;
-
+				_ASSERTE(hWnd == ghWnd); // CConEmuMain::WndProc is expected to be called for ghWnd
 			break;
-			//case WM_NCHITTEST:
-			//	{
-			//		/*result = -1;
-			//		if (gpSet->isHideCaptionAlways && gpSet->isTabs) {
-			//			if (this->mp_TabBar->IsShown()) {
-			//				HWND hTabBar = this->mp_TabBar->GetTabbar();
-			//				RECT rcWnd; GetWindowRect(hTabBar, &rcWnd);
-			//				TCHITTESTINFO tch = {{(int)(short)LOWORD(lParam),(int)(short)HIWORD(lParam)}};
-			//				if (PtInRect(&rcWnd, tch.pt)) {
-			//					// Преобразовать в относительные координаты
-			//					tch.pt.x -= rcWnd.left; tch.pt.y -= rcWnd.top;
-			//					LRESULT nTest = SendMessage(hTabBar, TCM_HITTEST, 0, (LPARAM)&tch);
-			//					if (nTest == -1) {
-			//						result = HTCAPTION;
-			//					}
-			//				}
-			//			}
-			//		}
-			//		if (result == -1)*/
-			//		result = DefWindowProc(hWnd, messg, wParam, lParam);
-			//		if (gpSet->isHideCaptionAlways() && !this->mp_TabBar->IsShown() && result == HTTOP)
-			//			result = HTCAPTION;
-			//	} break;
+
+		case WM_GETICON:
+			switch (wParam)
+			{
+			case ICON_BIG: // 1
+				return (LRESULT)hClassIcon;
+			case ICON_SMALL:
+			case ICON_SMALL2:
+				if (isInNcPaint() || !gpSet->isTaskbarOverlay || !mh_TaskbarIcon)
+				{
+					if (gpSetCls->isAdvLogging>=2)
+						LogString(L"WM_GETICON: returning hClassIconSm");
+					return (LRESULT)hClassIconSm;
+				}
+				if (gpSetCls->isAdvLogging >= 2)
+					LogString(L"WM_GETICON: returning mh_TaskbarIcon");
+				return (LRESULT)mh_TaskbarIcon;
+			default:
+				return ::DefWindowProc(hWnd, messg, wParam, lParam);
+			}
+			break;
+
 		default:
 
 			if (messg == this->mn_MsgPostCreate)
